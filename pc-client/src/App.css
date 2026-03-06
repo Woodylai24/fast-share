@@ -1,0 +1,381 @@
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  text-align: center;
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  width: 100%;
+  height: 100%;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2rem;
+  padding: 2rem;
+  flex: 1;
+  overflow-y: auto;
+  margin-top: 32px; /* Push below fixed title bar */
+  border: 2px dashed transparent;
+  transition: all 0.2s;
+  box-sizing: border-box;
+}
+
+.container.dragging {
+  background-color: rgba(0, 123, 255, 0.1);
+  border-color: #007bff;
+}
+
+.card {
+  background: #242424;
+  padding: 2rem;
+  border-radius: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  width: 100%;
+  max-width: 400px;
+}
+
+.qr-section {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 12px;
+  margin-bottom: 1rem;
+  color: #333;
+}
+
+.qr-section p {
+  margin-top: 1rem;
+  font-weight: bold;
+}
+
+.mono {
+  font-family: monospace;
+  background: #eee;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+}
+
+.status {
+  padding: 0.5rem;
+  border-radius: 4px;
+  font-weight: bold;
+}
+
+.status.connected {
+  background-color: #1b5e20;
+  color: #fff;
+}
+
+.status.disconnected {
+  background-color: #b71c1c;
+  color: #fff;
+}
+
+.messages-area {
+  width: 100%;
+  max-width: 600px;
+  text-align: left;
+}
+
+.messages-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.messages-header h3 {
+  margin: 0;
+}
+
+.clear-history-btn {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+  background: #444;
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.clear-history-btn:hover {
+  background: #666;
+}
+
+.message-list {
+  background: #1a1a1a;
+  height: 300px;
+  overflow-y: auto;
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+/* Day separator */
+.day-separator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 0;
+  margin: 0.5rem 0;
+}
+
+.day-separator::before,
+.day-separator::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #444;
+}
+
+.day-separator span {
+  padding: 0 1rem;
+  color: #888;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+/* System message */
+.message-system {
+  display: flex;
+  justify-content: center;
+  padding: 0.25rem 0;
+  margin: 0.25rem 0;
+}
+
+.message-system span {
+  background: #333;
+  color: #888;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+}
+
+/* Message bubbles */
+.message-bubble {
+  max-width: 75%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 12px;
+  position: relative;
+  cursor: pointer;
+  transition:
+    transform 0.1s,
+    box-shadow 0.1s;
+}
+
+.message-bubble:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.message-mine {
+  align-self: flex-end;
+  background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.message-other {
+  align-self: flex-start;
+  background: #333;
+  color: white;
+  border-bottom-left-radius: 4px;
+}
+
+.message-sender {
+  font-size: 0.7rem;
+  color: #888;
+  margin-bottom: 0.25rem;
+  font-weight: 500;
+}
+
+.message-text {
+  font-size: 0.9rem;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+.message-time {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: right;
+  margin-top: 0.25rem;
+}
+
+.message-mine .message-time {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* Image message */
+.message-image {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.message-image img {
+  max-width: 200px;
+  max-height: 200px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.message-filename {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* File message */
+.message-file {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 150px;
+}
+
+.file-icon {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.file-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.file-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.file-action {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* Context menu */
+.context-menu {
+  position: fixed;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+  min-width: 120px;
+  overflow: hidden;
+}
+
+.context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.6rem 1rem;
+  background: none;
+  border: none;
+  color: #fff;
+  text-align: left;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background 0.15s;
+}
+
+.context-menu-item:hover {
+  background: #3a3a3a;
+}
+
+.context-menu-item.delete {
+  color: #ff6b6b;
+}
+
+.context-menu-item.delete:hover {
+  background: rgba(255, 107, 107, 0.15);
+}
+
+.input-area {
+  display: flex;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 600px;
+}
+
+input[type="text"] {
+  flex: 1;
+  padding: 0.6rem;
+  border-radius: 4px;
+  border: 1px solid #555;
+  background: #242424;
+  color: white;
+}
+
+input[type="text"]:focus {
+  outline: none;
+  border-color: #007bff;
+}
+
+button {
+  padding: 0.6rem 1.2rem;
+  border-radius: 4px;
+  border: none;
+  background: #007bff;
+  color: white;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+button:hover {
+  background: #0056b3;
+}
+
+button:disabled {
+  background: #555;
+  cursor: not-allowed;
+}
+
+/* Scrollbar styling */
+.message-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.message-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.message-list::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 3px;
+}
+
+.message-list::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Image error fallback */
+.image-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1.5rem;
+  background: #333;
+  border-radius: 8px;
+  min-width: 150px;
+  min-height: 100px;
+}
+
+.image-error span:first-child {
+  font-size: 2rem;
+}
+
+.image-error span:last-child {
+  font-size: 0.75rem;
+  color: #888;
+}

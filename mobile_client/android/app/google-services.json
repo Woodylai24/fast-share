@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "147069199838",
+    "project_id": "fast-share-2bf2c",
+    "storage_bucket": "fast-share-2bf2c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:147069199838:android:7ce3e3b54095e5c092694f",
+        "android_client_info": {
+          "package_name": "io.github.woodylai24.fastshare"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBRZjBKBQ21b5VRWVgbqyKuRvzKtAPbeQw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
