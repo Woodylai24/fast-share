@@ -1157,6 +1157,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   bool _isReconnecting = false;
   final ScrollController _scrollController = ScrollController();
 
+  // Track if app is in foreground
+  bool _isInForeground = true;
+
   // Unique device ID for reconnection support
   static String? _deviceId;
 
@@ -1347,6 +1350,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     debugPrint('[DEBUG] App lifecycle changed: $state');
+    setState(() {
+      _isInForeground = state == AppLifecycleState.resumed;
+    });
 
     if (state == AppLifecycleState.resumed) {
       // App came back to foreground - check connection and reconnect if needed
@@ -1380,7 +1386,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
           messages.add(Message.text(content: content, sender: 'PC'));
         });
         _saveMessages();
-        _showNotification("New Message", content, payload: "COPY:$content");
+        if (!_isInForeground) {
+          _showNotification("New Message", content, payload: "COPY:$content");
+        }
         break;
 
       case 'handshake':
@@ -1396,7 +1404,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
           );
         });
         _saveMessages();
-        _showNotification("File Received", filename, payload: url);
+        if (!_isInForeground) {
+          _showNotification("File Received", filename, payload: url);
+        }
         break;
 
       case 'image':
@@ -1408,7 +1418,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
           );
         });
         _saveMessages();
-        _showNotification("Image Received", filename, payload: url);
+        if (!_isInForeground) {
+          _showNotification("Image Received", filename, payload: url);
+        }
         break;
 
       // Legacy support for file_offer
@@ -1421,7 +1433,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
           );
         });
         _saveMessages();
-        _showNotification("File Received", filename, payload: url);
+        if (!_isInForeground) {
+          _showNotification("File Received", filename, payload: url);
+        }
         _showFileOfferDialog(filename, url);
         break;
     }
