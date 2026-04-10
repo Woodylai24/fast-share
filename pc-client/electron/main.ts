@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, clipboard } from "electron";
 import path from "path";
 import { WebSocketServer, WebSocket } from "ws";
 import express from "express";
@@ -66,6 +66,17 @@ interface QueuedMessage {
 const messageQueue: Map<string, QueuedMessage[]> = new Map();
 // Map of device ID -> FCM token for push notifications
 const deviceFcmTokens: Map<string, string> = new Map();
+
+// --- Clipboard Sync ---
+let lastClipboardText = clipboard.readText();
+setInterval(() => {
+  const currentText = clipboard.readText();
+  if (currentText && currentText !== lastClipboardText) {
+    lastClipboardText = currentText;
+    broadcastToClients({ type: "clipboard", content: currentText });
+    console.log("[DEBUG] Clipboard changed, broadcasting to clients");
+  }
+}, 1000);
 
 // Enable remote debugging for VS Code to attach to Renderer
 app.commandLine.appendSwitch("remote-debugging-port", "9222");
@@ -326,6 +337,11 @@ function startServers() {
         }
 
         // Forward other messages to Renderer
+        if (data.type === "clipboard") {
+          clipboard.writeText(data.content);
+          lastClipboardText = data.content; // Avoid loopback
+          console.log("[DEBUG] Received clipboard from mobile");
+        }
         mainWindow?.webContents.send("ws-message", data);
       } catch (error) {
         console.error("[DEBUG] Failed to parse WS message", error);
