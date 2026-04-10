@@ -273,7 +273,7 @@ function startServers() {
   // Endpoint to serve files to Mobile (legacy HTTP fallback)
   expressApp.use("/files", express.static(sharedDir));
 
-  httpServer = expressApp.listen(HTTP_PORT, () => {
+  httpServer = expressApp.listen(HTTP_PORT, "127.0.0.1", () => {
     console.log(
       `[DEBUG] HTTP Server running on http://${getLocalIp()}:${HTTP_PORT}`,
     );
@@ -705,6 +705,14 @@ function setupIpc() {
       await shell.openExternal(url);
     } catch (error) {
       console.error("[DEBUG] Failed to open external URL:", error);
+    }
+  });
+
+  ipcMain.on("open-path", async (event, filePath: string) => {
+    try {
+      await shell.openPath(filePath);
+    } catch (error) {
+      console.error("[DEBUG] Failed to open file:", error);
     }
   });
 
