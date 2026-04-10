@@ -20,6 +20,7 @@ import 'share_handler.dart';
 import 'crypto_service.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_linkify/flutter_linkify.dart';
+import 'package:open_filex/open_filex.dart';
 import 'firebase_options.dart';
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
@@ -1962,6 +1963,17 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   }
 
   Future<void> _openUrl(String urlString) async {
+    if (urlString.startsWith('file://')) {
+      // Android blocks file:// URIs in Intents — use open_filex instead
+      // For now, open in-app or share via system share sheet
+      try {
+        final filePath = urlString.replaceFirst('file://', '');
+        await OpenFilex.open(filePath);
+      } catch (e) {
+        debugPrint('[DEBUG] Failed to open local file: $e');
+      }
+      return;
+    }
     final Uri url = Uri.parse(urlString);
     if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
       // URL launch failed
