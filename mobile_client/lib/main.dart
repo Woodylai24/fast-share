@@ -1856,11 +1856,6 @@ class _ConnectedScreenState extends State<ConnectedScreen>
       }
     });
 
-    // Register the file send callback — uses encrypted WS
-    ShareHandler.registerSendFileCallback((filePath, filename) async {
-      await _sendFileViaWs(filePath, filename);
-    });
-
     ShareHandler.registerLocalMessageCallback((fileInfo) {
       final filename = fileInfo['filename'] ?? 'Unknown';
       final url = fileInfo['url'] ?? '';
