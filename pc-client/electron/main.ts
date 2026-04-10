@@ -341,6 +341,15 @@ function startServers() {
           clipboard.writeText(data.content);
           lastClipboardText = data.content; // Avoid loopback
           console.log("[DEBUG] Received clipboard from mobile");
+          // Show Windows notification
+          const { Notification } = require("electron");
+          if (Notification.isSupported()) {
+            new Notification({
+              title: "Fast Share - Clipboard Sync",
+              body: data.content.length > 100 ? data.content.substring(0, 100) + "..." : data.content,
+              silent: false,
+            }).show();
+          }
         }
         mainWindow?.webContents.send("ws-message", data);
       } catch (error) {

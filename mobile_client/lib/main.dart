@@ -1163,6 +1163,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   // Track last clipboard for mobile-to-PC sync
   String? _lastClipboardText;
   String? _lastReceivedClipboard; // To prevent loopback
+  Timer? _clipboardPollTimer;
 
   // Unique device ID for reconnection support
   static String? _deviceId;
@@ -1177,6 +1178,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     _initDeviceId();
     _loadSavedMessages();
     _connect();
+    _startClipboardPolling();
   }
 
   Future<void> _initDeviceId() async {
@@ -1579,6 +1581,14 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   }
 
   // --- Mobile-to-PC Clipboard Sync ---
+  void _startClipboardPolling() {
+    _clipboardPollTimer = Timer.periodic(Duration(seconds: 2), (_) {
+      if (_isInForeground && !_isDisconnected) {
+        _checkAndSendClipboard();
+      }
+    });
+  }
+
   void _saveCurrentClipboard() {
     Clipboard.getData(Clipboard.kTextPlain).then((data) {
       if (data?.text != null) {
@@ -1735,6 +1745,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _clipboardPollTimer?.cancel();
     _subscription?.cancel();
     channel.sink.close();
     _textController.dispose();
