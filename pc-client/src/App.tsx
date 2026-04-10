@@ -201,11 +201,7 @@ function MessageBubble({
       previousMessage.timestamp.toDateString();
 
   // Check if we need to show timestamp (every 5 minutes gap)
-  const showTimestamp =
-    !previousMessage ||
-    message.timestamp.getTime() - previousMessage.timestamp.getTime() >
-      5 * 60 * 1000 ||
-    message.sender !== previousMessage.sender;
+  const showTimestamp = true; // Always show timestamp on every message
 
   if (isSystem) {
     return (
