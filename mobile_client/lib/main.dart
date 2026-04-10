@@ -1160,6 +1160,10 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   // Track if app is in foreground
   bool _isInForeground = true;
 
+  // Track last clipboard for mobile-to-PC sync
+  String? _lastClipboardText;
+  String? _lastReceivedClipboard; // To prevent loopback
+
   // Unique device ID for reconnection support
   static String? _deviceId;
 
@@ -1360,6 +1364,11 @@ class _ConnectedScreenState extends State<ConnectedScreen>
         debugPrint('[DEBUG] App resumed, attempting reconnect...');
         _attemptReconnect();
       }
+      // Send clipboard to PC if it changed while app was in background
+      _checkAndSendClipboard();
+    } else if (state == AppLifecycleState.paused) {
+      // Save current clipboard state when going to background
+      _saveCurrentClipboard();
     }
   }
 
@@ -1425,6 +1434,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
 
       case 'clipboard':
         final clipboardContent = data['content'] ?? '';
+        if (!_isInForeground) {
+          _showNotification("Clipboard Sync", clipboardContent.length > 50 ? clipboardContent.substring(0, 50) + '...' : clipboardContent, payload: "COPY:$clipboardContent");
+        }
         _showClipboardDialog(clipboardContent);
         break;
 
@@ -1450,6 +1462,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
 
   void _showClipboardDialog(String content) {
     if (!mounted) return;
+    _lastReceivedClipboard = content; // Track to prevent loopback
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1563,6 +1576,29 @@ class _ConnectedScreenState extends State<ConnectedScreen>
       _textController.clear();
       _scrollToBottom();
     }
+  }
+
+  // --- Mobile-to-PC Clipboard Sync ---
+  void _saveCurrentClipboard() {
+    Clipboard.getData(Clipboard.kTextPlain).then((data) {
+      if (data?.text != null) {
+        _lastClipboardText = data!.text;
+        debugPrint('[DEBUG] Saved clipboard state: ${_lastClipboardText?.substring(0, (_lastClipboardText!.length > 30 ? 30 : _lastClipboardText!.length))}...');
+      }
+    });
+  }
+
+  void _checkAndSendClipboard() {
+    Clipboard.getData(Clipboard.kTextPlain).then((data) {
+      if (data?.text == null) return;
+      final currentClipboard = data!.text!;
+      // Only send if clipboard changed AND it's not what we just received from PC (loopback prevention)
+      if (currentClipboard != _lastClipboardText && currentClipboard != _lastReceivedClipboard) {
+        debugPrint('[DEBUG] Clipboard changed while in background, sending to PC');
+        _sendJson({'type': 'clipboard', 'content': currentClipboard});
+        _lastClipboardText = currentClipboard;
+      }
+    });
   }
 
   void _showFileOfferDialog(String filename, String url) {
