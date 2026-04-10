@@ -14,6 +14,7 @@ import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:network_info_plus/network_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'share_handler.dart';
 import 'crypto_service.dart';
@@ -1597,9 +1598,24 @@ class _ConnectedScreenState extends State<ConnectedScreen>
       caseSensitive: false,
     ).hasMatch(filename);
 
-    // Create a local file URL (file is saved on PC side, we reference it)
-    final fileUrl =
-        'http://${widget.ip}:${widget.httpPort}/files/${Uri.encodeComponent(filename)}';
+    // Save file locally on device (no need to fetch from PC's HTTP server)
+    String fileUrl;
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final fastShareDir = Directory('${appDir.path}/FastShare');
+      if (!await fastShareDir.exists()) {
+        await fastShareDir.create(recursive: true);
+      }
+      final localFile = File('${fastShareDir.path}/$filename');
+      await localFile.writeAsBytes(assembled);
+      fileUrl = 'file://${localFile.path}';
+      debugPrint('[DEBUG] File saved locally: ${localFile.path}');
+    } catch (e) {
+      debugPrint('[DEBUG] Failed to save file locally: $e');
+      // Fallback to HTTP URL
+      fileUrl =
+          'http://${widget.ip}:${widget.httpPort}/files/${Uri.encodeComponent(filename)}';
+    }
 
     if (mounted && !_isDisconnected) {
       setState(() {
@@ -2461,33 +2477,55 @@ class MessageBubble extends StatelessWidget {
   Widget _buildImageBubble(BuildContext context, bool isMe) {
     final String? url = message.url;
 
+    // Handle local file:// URLs vs remote http:// URLs
+    final bool isLocalFile = url != null && url.startsWith('file://');
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: Container(
         constraints: const BoxConstraints(maxWidth: 200, maxHeight: 200),
         child: url != null
-            ? CachedNetworkImage(
-                imageUrl: url,
-                fit: BoxFit.cover,
-                placeholder: (context, url) => Container(
-                  color: Colors.grey[200],
-                  child: const Center(child: CircularProgressIndicator()),
-                ),
-                errorWidget: (context, url, error) => Container(
-                  color: Colors.grey[200],
-                  child: const Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.broken_image, size: 40, color: Colors.grey),
-                      SizedBox(height: 4),
-                      Text(
-                        'Failed to load',
-                        style: TextStyle(fontSize: 10, color: Colors.grey),
+            ? isLocalFile
+                ? Image.file(
+                    File(url.replaceFirst('file://', '')),
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => Container(
+                      color: Colors.grey[200],
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.broken_image, size: 40, color: Colors.grey),
+                          SizedBox(height: 4),
+                          Text(
+                            'Failed to load',
+                            style: TextStyle(fontSize: 10, color: Colors.grey),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
-              )
+                    ),
+                  )
+                : CachedNetworkImage(
+                    imageUrl: url,
+                    fit: BoxFit.cover,
+                    placeholder: (context, url) => Container(
+                      color: Colors.grey[200],
+                      child: const Center(child: CircularProgressIndicator()),
+                    ),
+                    errorWidget: (context, url, error) => Container(
+                      color: Colors.grey[200],
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.broken_image, size: 40, color: Colors.grey),
+                          SizedBox(height: 4),
+                          Text(
+                            'Failed to load',
+                            style: TextStyle(fontSize: 10, color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
             : Container(
                 color: Colors.grey[200],
                 child: const Icon(Icons.image, size: 40, color: Colors.grey),
