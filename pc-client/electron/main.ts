@@ -208,6 +208,7 @@ function startServers() {
         filename,
         path: savePath,
       });
+      // Note: Don't broadcast to mobile - they already add the file optimistically on their side.
       res.status(200).send("Upload complete");
     });
 
@@ -604,6 +605,9 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
   }
 }
+
+
+
 
 app.whenReady().then(() => {
   setupIpc();
