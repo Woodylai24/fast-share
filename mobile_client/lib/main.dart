@@ -1,6 +1,7 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -15,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'share_handler.dart';
+import 'crypto_service.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_linkify/flutter_linkify.dart';
 import 'firebase_options.dart';
@@ -393,7 +395,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     // Check if current network matches the last connected network
-    // Also try to match if both are null (VPN case or permission issue)
     final bool networkMatches;
     if (_currentNetworkName != null && lastNetworkName != null) {
       // Normalize network names by removing quotes
@@ -404,11 +405,9 @@ class _HomeScreenState extends State<HomeScreen> {
         '[DEBUG] Normalized comparison: "$normalizedCurrent" vs "$normalizedLast" = $networkMatches',
       );
     } else if (_currentNetworkName == null && lastNetworkName == null) {
-      // Both null - could be VPN or permission issue, allow auto-connect
       networkMatches = true;
       debugPrint('[DEBUG] Both network names are null, allowing auto-connect');
     } else {
-      // One is null, other is not
       networkMatches = false;
       debugPrint('[DEBUG] One network name is null, other is not - no match');
     }
@@ -764,7 +763,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   setState(() {
                     hasScanned = true;
                   });
-                  // Stop scanning and navigate to Connecting Screen
                   Navigator.pushReplacement(
                     context,
                     MaterialPageRoute(
@@ -775,7 +773,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                       ),
                     ),
                   );
-                  return; // Detect only one
+                  return;
                 }
               } catch (e) {
                 // Not our QR code
@@ -839,7 +837,7 @@ class _ConnectingScreenState extends State<ConnectingScreen> {
         }
       });
 
-      // Listen for messages (single-subscription stream, so we need to handle carefully)
+      // Listen for messages
       _subscription = _channel!.stream.listen(
         (message) async {
           debugPrint('[DEBUG] Received: $message');
@@ -855,7 +853,6 @@ class _ConnectingScreenState extends State<ConnectingScreen> {
                 await _saveConnectionToHistory();
 
                 // Cancel this subscription before navigating
-                // ConnectedScreen will create its own connection
                 _subscription?.cancel();
                 _channel?.sink.close();
 
@@ -924,7 +921,6 @@ class _ConnectingScreenState extends State<ConnectingScreen> {
 
   Future<void> _saveConnectionToHistory() async {
     try {
-      // Get current network name
       String? networkName;
       try {
         final networkInfo = NetworkInfo();
@@ -956,7 +952,6 @@ class _ConnectingScreenState extends State<ConnectingScreen> {
 
   @override
   void dispose() {
-    // Only close if we're not navigating to ConnectedScreen
     if (!_handshakeReceived) {
       _cleanup();
     }
@@ -1176,6 +1171,14 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   // Track if this was an intentional disconnect
   bool _intentionalDisconnect = false;
 
+  // E2EE crypto service
+  final CryptoService _crypto = CryptoService();
+  bool _keyExchangeComplete = false;
+  Timer? _keyExchangeTimeout;
+
+  // File chunk reassembly state
+  _IncomingFileTransfer? _incomingFile;
+
   @override
   void initState() {
     super.initState();
@@ -1188,7 +1191,6 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   }
 
   Future<void> _initDeviceId() async {
-    // Get or create a unique device ID for reconnection support
     final prefs = await SharedPreferences.getInstance();
     _deviceId = prefs.getString('device_id');
     if (_deviceId == null) {
@@ -1204,7 +1206,6 @@ class _ConnectedScreenState extends State<ConnectedScreen>
       setState(() {
         messages = savedMessages;
       });
-      // Scroll to bottom after loading
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _scrollToBottom();
       });
@@ -1229,6 +1230,11 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     final wsUrl = Uri.parse('ws://${widget.ip}:${widget.port}');
     debugPrint('[DEBUG] ConnectedScreen: Connecting to $wsUrl');
 
+    // Initialize crypto for this connection
+    await _crypto.init();
+    _keyExchangeComplete = false;
+    debugPrint('[DEBUG] CryptoService initialized with new ephemeral key pair');
+
     channel = WebSocketChannel.connect(wsUrl);
 
     _subscription = channel.stream.listen(
@@ -1237,10 +1243,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
         try {
           final data = jsonDecode(message);
           debugPrint('[DEBUG] Parsed message type: ${data['type']}');
-          _handleIncomingMessage(data);
+          _handleRawMessage(data);
         } catch (e) {
           debugPrint('[DEBUG] Failed to parse message: $e');
-          // Fallback for plain text messages
           if (mounted && !_isDisconnected) {
             setState(() {
               messages.add(
@@ -1255,8 +1260,6 @@ class _ConnectedScreenState extends State<ConnectedScreen>
       onError: (error) {
         debugPrint('[DEBUG] WebSocket ERROR: $error');
         if (mounted && !_isDisconnected && !_intentionalDisconnect) {
-          // Don't immediately disconnect - might be temporary network issue
-          // Will attempt reconnect on app resume
           debugPrint(
             '[DEBUG] Connection error, will attempt reconnect on resume',
           );
@@ -1265,7 +1268,6 @@ class _ConnectedScreenState extends State<ConnectedScreen>
       onDone: () {
         debugPrint('[DEBUG] WebSocket connection CLOSED');
         if (mounted && !_isDisconnected && !_intentionalDisconnect) {
-          // Connection closed but not intentional - mark for potential reconnect
           debugPrint(
             '[DEBUG] Connection closed unexpectedly, will attempt reconnect on resume',
           );
@@ -1287,10 +1289,85 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     );
   }
 
+  /// Handle raw messages from WebSocket (before decryption)
+  void _handleRawMessage(Map<String, dynamic> data) {
+    final String msgType = data['type'] ?? '';
+
+    // Handle key-exchange from server
+    if (msgType == 'key-exchange') {
+      debugPrint('[DEBUG] Received key-exchange from server');
+      _handleKeyExchange(data['publicKey'] as String);
+      return;
+    }
+
+    // Handle handshake from server
+    if (msgType == 'handshake') {
+      debugPrint('[DEBUG] Received handshake from server');
+      // Key exchange will follow
+      return;
+    }
+
+    // Handle encrypted messages
+    if (msgType == 'encrypted') {
+      if (!_keyExchangeComplete) {
+        debugPrint('[DEBUG] Received encrypted message before key exchange — dropping');
+        return;
+      }
+      _handleEncryptedMessage(data);
+      return;
+    }
+
+    // Handle disconnect
+    if (msgType == 'disconnect') {
+      final reason = data['reason'] ?? 'PC disconnected';
+      debugPrint('[DEBUG] Received disconnect message: $reason');
+      _intentionalDisconnect = true;
+      if (mounted && !_isDisconnected) {
+        _handleDisconnect(reason);
+      }
+      return;
+    }
+
+    // Legacy plaintext messages (fallback)
+    _handleIncomingMessage(data);
+  }
+
+  /// Handle key exchange — compute shared secret
+  Future<void> _handleKeyExchange(String serverPublicKey) async {
+    try {
+      await _crypto.computeSharedSecret(serverPublicKey);
+      _keyExchangeComplete = true;
+      _keyExchangeTimeout?.cancel();
+
+      // Send our public key back to server
+      final ourPublicKey = await _crypto.getPublicKeyBase64();
+      _sendJson({'type': 'key-exchange', 'publicKey': ourPublicKey});
+      debugPrint('[DEBUG] Key exchange complete — encrypted channel established');
+    } catch (e) {
+      debugPrint('[DEBUG] Key exchange failed: $e');
+    }
+  }
+
+  /// Handle an encrypted message — decrypt and process
+  Future<void> _handleEncryptedMessage(Map<String, dynamic> wrapper) async {
+    final decrypted = await _crypto.decrypt({
+      'nonce': wrapper['nonce'] as String,
+      'payload': wrapper['payload'] as String,
+      'tag': wrapper['tag'] as String,
+    });
+
+    if (decrypted == null) {
+      debugPrint('[DEBUG] Decryption failed — dropping message');
+      return;
+    }
+
+    debugPrint('[DEBUG] Decrypted inner message type: ${decrypted['type']}');
+    _handleIncomingMessage(decrypted);
+  }
+
   /// Check if WebSocket is still connected
   bool _isConnected() {
     try {
-      // Check if the channel is still active by checking ready future
       return !_isDisconnected && channel.closeCode == null;
     } catch (e) {
       return false;
@@ -1305,8 +1382,11 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     debugPrint('[DEBUG] Attempting to reconnect...');
 
     try {
-      // Close old subscription if exists
       await _subscription?.cancel();
+
+      // Re-initialize crypto for new ephemeral keys
+      await _crypto.init();
+      _keyExchangeComplete = false;
 
       final wsUrl = Uri.parse('ws://${widget.ip}:${widget.port}');
       channel = WebSocketChannel.connect(wsUrl);
@@ -1316,7 +1396,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
           debugPrint('[DEBUG] Received message on reconnect: $message');
           try {
             final data = jsonDecode(message);
-            _handleIncomingMessage(data);
+            _handleRawMessage(data);
           } catch (e) {
             debugPrint('[DEBUG] Failed to parse message: $e');
             if (mounted && !_isDisconnected) {
@@ -1344,7 +1424,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
         },
       );
 
-      // Send reconnect message with device ID to retrieve queued messages
+      // Send reconnect message with device ID
       _sendJson({'type': 'reconnect', 'deviceId': _deviceId});
       debugPrint('[DEBUG] Reconnect message sent');
 
@@ -1367,32 +1447,19 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     });
 
     if (state == AppLifecycleState.resumed) {
-      // App came back to foreground - check connection and reconnect if needed
       if (!_intentionalDisconnect && !_isConnected()) {
         debugPrint('[DEBUG] App resumed, attempting reconnect...');
         _attemptReconnect();
       }
-      // Send clipboard to PC if it changed while app was in background
       _checkAndSendClipboard();
     } else if (state == AppLifecycleState.paused) {
-      // Save current clipboard state when going to background
       _saveCurrentClipboard();
     }
   }
 
+  /// Process a decrypted (or plaintext legacy) message
   void _handleIncomingMessage(Map<String, dynamic> data) {
     final String msgType = data['type'] ?? 'text';
-
-    // Handle disconnect message from PC
-    if (msgType == 'disconnect') {
-      final reason = data['reason'] ?? 'PC disconnected';
-      debugPrint('[DEBUG] Received disconnect message: $reason');
-      _intentionalDisconnect = true; // PC initiated disconnect
-      if (mounted && !_isDisconnected) {
-        _handleDisconnect(reason);
-      }
-      return;
-    }
 
     if (!mounted || _isDisconnected) return;
 
@@ -1409,7 +1476,6 @@ class _ConnectedScreenState extends State<ConnectedScreen>
         break;
 
       case 'handshake':
-        // Connection established - no system message needed
         break;
 
       case 'file':
@@ -1448,7 +1514,18 @@ class _ConnectedScreenState extends State<ConnectedScreen>
         _showClipboardDialog(clipboardContent);
         break;
 
-      // Legacy support for file_offer
+      case 'file-start':
+        _handleFileStart(data);
+        break;
+
+      case 'file-chunk':
+        _handleFileChunk(data);
+        break;
+
+      case 'file-end':
+        _handleFileEnd(data);
+        break;
+
       case 'file_offer':
         final filename = data['filename'] ?? 'Unknown file';
         final url = data['url'] ?? '';
@@ -1468,9 +1545,84 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     _scrollToBottom();
   }
 
+  // --- Encrypted file transfer handling ---
+
+  void _handleFileStart(Map<String, dynamic> data) {
+    debugPrint('[DEBUG] File transfer starting: ${data['filename']} (${data['fileSize']} bytes)');
+    _incomingFile?._cleanup();
+    _incomingFile = _IncomingFileTransfer(
+      filename: data['filename'] as String,
+      fileSize: data['fileSize'] as int,
+      mimeType: data['mimeType'] as String? ?? 'application/octet-stream',
+    );
+  }
+
+  void _handleFileChunk(Map<String, dynamic> data) {
+    if (_incomingFile == null) {
+      debugPrint('[DEBUG] Received file-chunk without file-start — dropping');
+      return;
+    }
+    final chunkData = base64Decode(data['data'] as String);
+    _incomingFile!.chunks.add(chunkData);
+    _incomingFile!.receivedBytes += chunkData.length;
+    _incomingFile!._resetTimer();
+  }
+
+  Future<void> _handleFileEnd(Map<String, dynamic> data) async {
+    if (_incomingFile == null) {
+      debugPrint('[DEBUG] Received file-end without file-start — ignoring');
+      return;
+    }
+
+    final transfer = _incomingFile!;
+    _incomingFile = null;
+    transfer._cancelTimer();
+
+    // Assemble and verify checksum
+    final assembled = <int>[];
+    for (final chunk in transfer.chunks) {
+      assembled.addAll(chunk);
+    }
+
+    final checksum = await CryptoService.sha256(assembled);
+    if (checksum != data['checksum']) {
+      debugPrint('[DEBUG] File checksum mismatch: expected ${data['checksum']}, got $checksum');
+      return;
+    }
+
+    // Determine file type for message display
+    final filename = transfer.filename;
+    final isImage = RegExp(
+      r'\.(jpg|jpeg|png|gif|webp|bmp)$',
+      caseSensitive: false,
+    ).hasMatch(filename);
+
+    // Create a local file URL (file is saved on PC side, we reference it)
+    final fileUrl =
+        'http://${widget.ip}:${widget.httpPort}/files/${Uri.encodeComponent(filename)}';
+
+    if (mounted && !_isDisconnected) {
+      setState(() {
+        if (isImage) {
+          messages.add(Message.image(filename: filename, url: fileUrl, sender: 'PC'));
+        } else {
+          messages.add(Message.file(filename: filename, url: fileUrl, sender: 'PC'));
+        }
+      });
+      _saveMessages();
+      _scrollToBottom();
+
+      if (!_isInForeground) {
+        _showNotification("File Received", filename, payload: fileUrl);
+      }
+    }
+
+    debugPrint('[DEBUG] File transfer complete: $filename (${transfer.receivedBytes} bytes)');
+  }
+
   void _showClipboardDialog(String content) {
     if (!mounted) return;
-    _lastReceivedClipboard = content; // Track to prevent loopback
+    _lastReceivedClipboard = content;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1497,20 +1649,21 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   }
 
   void _handleDisconnect(String reason) {
-    if (_isDisconnected) return; // Prevent multiple calls
+    if (_isDisconnected) return;
     _isDisconnected = true;
 
-    // Close WebSocket
+    _incomingFile?._cleanup();
+    _incomingFile = null;
+    _keyExchangeTimeout?.cancel();
+
     channel.sink.close();
 
-    // Navigate to home screen with message
     if (mounted) {
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (context) => const HomeScreen()),
         (route) => false,
       );
-      // Show snackbar with disconnect reason
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Disconnected: $reason'),
@@ -1525,14 +1678,15 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     _isDisconnected = true;
     _intentionalDisconnect = true;
 
-    // Send disconnect message to PC
+    _incomingFile?._cleanup();
+    _incomingFile = null;
+    _keyExchangeTimeout?.cancel();
+
     _sendJson({'type': 'disconnect', 'reason': 'user_initiated'});
     debugPrint('[DEBUG] Sent disconnect message to PC');
 
-    // Close WebSocket
     channel.sink.close();
 
-    // Navigate to home screen
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(builder: (context) => const HomeScreen()),
@@ -1567,15 +1721,130 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     );
   }
 
+  /// Send JSON to server — encrypts if key exchange is complete.
   void _sendJson(Map<String, dynamic> data) {
-    if (!_isDisconnected) {
+    if (_isDisconnected) return;
+
+    final type = data['type'] as String?;
+
+    // Unencrypted types are sent as plaintext
+    if (type != null && isUnencryptedType(type)) {
+      channel.sink.add(jsonEncode(data));
+      return;
+    }
+
+    // Encrypt if key exchange is complete
+    if (_keyExchangeComplete && _crypto.isReady) {
+      _sendEncrypted(data);
+    } else {
+      // Fallback to plaintext if key exchange not yet complete
       channel.sink.add(jsonEncode(data));
     }
+  }
+
+  /// Encrypt and send a message
+  void _sendEncrypted(Map<String, dynamic> data) async {
+    try {
+      final encrypted = await _crypto.encrypt(data);
+      channel.sink.add(jsonEncode({
+        'type': 'encrypted',
+        ...encrypted,
+      }));
+    } catch (e) {
+      debugPrint('[DEBUG] Failed to encrypt message, sending plaintext: $e');
+      channel.sink.add(jsonEncode(data));
+    }
+  }
+
+  /// Send a file via encrypted chunked WebSocket transfer.
+  Future<void> _sendFileViaWs(String filePath, String filename) async {
+    if (!_keyExchangeComplete || !_crypto.isReady) {
+      debugPrint('[DEBUG] Key exchange not complete, falling back to HTTP upload');
+      await _uploadFileViaHttp(filePath, filename);
+      return;
+    }
+
+    try {
+      final file = File(filePath);
+      final fileBytes = await file.readAsBytes();
+      final fileSize = fileBytes.length;
+      final mimeType = _getMimeType(filename);
+      final checksum = await CryptoService.sha256(fileBytes);
+
+      // Send file-start
+      _sendEncrypted({
+        'type': 'file-start',
+        'filename': filename,
+        'fileSize': fileSize,
+        'mimeType': mimeType,
+      });
+
+      // Send file-chunks (64KB)
+      const chunkSize = 64 * 1024;
+      int offset = 0;
+      int seq = 0;
+      while (offset < fileSize) {
+        final end = (offset + chunkSize > fileSize) ? fileSize : offset + chunkSize;
+        final chunk = fileBytes.sublist(offset, end);
+        _sendEncrypted({
+          'type': 'file-chunk',
+          'seq': seq,
+          'data': base64Encode(chunk),
+        });
+        offset = end;
+        seq++;
+      }
+
+      // Send file-end
+      _sendEncrypted({
+        'type': 'file-end',
+        'filename': filename,
+        'checksum': checksum,
+      });
+
+      debugPrint('[DEBUG] File sent via encrypted WS: $filename ($fileSize bytes, $seq chunks)');
+    } catch (e) {
+      debugPrint('[DEBUG] Failed to send file via WS, falling back to HTTP: $e');
+      await _uploadFileViaHttp(filePath, filename);
+    }
+  }
+
+  /// Legacy HTTP upload fallback
+  Future<void> _uploadFileViaHttp(String filePath, String filename) async {
+    try {
+      var request = http.StreamedRequest(
+        'POST',
+        Uri.parse('http://${widget.ip}:${widget.httpPort}/upload'),
+      );
+      request.headers['x-filename'] = filename;
+      final file = File(filePath);
+      request.contentLength = await file.length();
+      request.sink.addStream(file.openRead());
+
+      final response = await request.send();
+      debugPrint('[DEBUG] HTTP upload response: ${response.statusCode}');
+    } catch (e) {
+      debugPrint('[DEBUG] HTTP upload failed: $e');
+    }
+  }
+
+  String _getMimeType(String filename) {
+    final ext = filename.split('.').last.toLowerCase();
+    const mimeMap = {
+      'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
+      'gif': 'image/gif', 'bmp': 'image/bmp', 'webp': 'image/webp',
+      'svg': 'image/svg+xml', 'pdf': 'application/pdf', 'zip': 'application/zip',
+      'txt': 'text/plain', 'json': 'application/json',
+      'mp4': 'video/mp4', 'mp3': 'audio/mpeg',
+    };
+    return mimeMap[ext] ?? 'application/octet-stream';
   }
 
   void _setupShareHandler() {
     ShareHandler.setupListener();
     ShareHandler.setContext(context);
+
+    // Register the encrypted send callback
     ShareHandler.registerSendCallback((data) {
       _sendJson(data);
       if (data['type'] == 'text' && data['content'] != null) {
@@ -1586,6 +1855,12 @@ class _ConnectedScreenState extends State<ConnectedScreen>
         _scrollToBottom();
       }
     });
+
+    // Register the file send callback — uses encrypted WS
+    ShareHandler.registerSendFileCallback((filePath, filename) async {
+      await _sendFileViaWs(filePath, filename);
+    });
+
     ShareHandler.registerLocalMessageCallback((fileInfo) {
       final filename = fileInfo['filename'] ?? 'Unknown';
       final url = fileInfo['url'] ?? '';
@@ -1622,7 +1897,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
 
   // --- Mobile-to-PC Clipboard Sync ---
   void _startClipboardPolling() {
-    _clipboardPollTimer = Timer.periodic(Duration(seconds: 2), (_) {
+    _clipboardPollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       if (_isInForeground && !_isDisconnected) {
         _checkAndSendClipboard();
       }
@@ -1642,7 +1917,6 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     Clipboard.getData(Clipboard.kTextPlain).then((data) {
       if (data?.text == null) return;
       final currentClipboard = data!.text!;
-      // Only send if clipboard changed AND it's not what we just received from PC (loopback prevention)
       if (currentClipboard != _lastClipboardText && currentClipboard != _lastReceivedClipboard) {
         debugPrint('[DEBUG] Clipboard changed while in background, sending to PC');
         _sendJson({'type': 'clipboard', 'content': currentClipboard});
@@ -1679,7 +1953,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   Future<void> _openUrl(String urlString) async {
     final Uri url = Uri.parse(urlString);
     if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-      // URL launch failed - silently ignore or could log for debugging
+      // URL launch failed
     }
   }
 
@@ -1692,17 +1966,15 @@ class _ConnectedScreenState extends State<ConnectedScreen>
       File file = File(result.files.single.path!);
       String filename = result.files.single.name;
 
-      // Determine if it's an image
       final isImage = RegExp(
         r'\.(jpg|jpeg|png|gif|webp|bmp)$',
         caseSensitive: false,
       ).hasMatch(filename);
 
-      // Create the file URL that will be available after upload
+      // Create the file URL (for display, actual transfer is via WS)
       final fileUrl =
           'http://${widget.ip}:${widget.httpPort}/files/${Uri.encodeComponent(filename)}';
 
-      // Add the message immediately (optimistic UI update)
       final message = isImage
           ? Message.image(filename: filename, url: fileUrl, sender: 'Me')
           : Message.file(filename: filename, url: fileUrl, sender: 'Me');
@@ -1715,30 +1987,12 @@ class _ConnectedScreenState extends State<ConnectedScreen>
         _scrollToBottom();
       }
 
+      // Send file via encrypted WS (or HTTP fallback)
       try {
-        var request = http.StreamedRequest(
-          'POST',
-          Uri.parse('http://${widget.ip}:${widget.httpPort}/upload'),
-        );
-        request.headers['x-filename'] = filename;
-        request.contentLength = await file.length();
-
-        request.sink.addStream(file.openRead());
-
-        final response = await request.send();
-
-        if (mounted && !_isDisconnected) {
-          if (response.statusCode != 200) {
-            // Remove the failed message silently
-            setState(() {
-              messages.removeWhere((m) => m.id == message.id);
-            });
-            _saveMessages();
-          }
-        }
+        await _sendFileViaWs(file.path, filename);
       } catch (e) {
+        debugPrint('[DEBUG] File send failed: $e');
         if (mounted && !_isDisconnected) {
-          // Remove the failed message silently
           setState(() {
             messages.removeWhere((m) => m.id == message.id);
           });
@@ -1786,6 +2040,8 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _clipboardPollTimer?.cancel();
+    _keyExchangeTimeout?.cancel();
+    _incomingFile?._cleanup();
     ShareHandler.unregisterSendCallback();
     _subscription?.cancel();
     channel.sink.close();
@@ -1920,6 +2176,40 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   }
 }
 
+/// Incoming file transfer state for reassembly
+class _IncomingFileTransfer {
+  final String filename;
+  final int fileSize;
+  final String mimeType;
+  final List<Uint8List> chunks = [];
+  int receivedBytes = 0;
+  Timer? _timer;
+
+  _IncomingFileTransfer({
+    required this.filename,
+    required this.fileSize,
+    required this.mimeType,
+  }) {
+    _resetTimer();
+  }
+
+  void _resetTimer() {
+    _timer?.cancel();
+    _timer = Timer(const Duration(seconds: 30), () {
+      debugPrint('[DEBUG] File chunk reassembly timeout for $filename');
+    });
+  }
+
+  void _cancelTimer() {
+    _timer?.cancel();
+  }
+
+  void _cleanup() {
+    _cancelTimer();
+    chunks.clear();
+  }
+}
+
 /// Format time for message timestamp
 String _formatMessageTime(DateTime time) {
   return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
@@ -1963,7 +2253,7 @@ class MessageBubble extends StatelessWidget {
   }
 
   bool get _showTimestamp {
-    return true; // Always show timestamp on every message
+    return true;
   }
 
   @override
@@ -1995,7 +2285,6 @@ class MessageBubble extends StatelessWidget {
                   ? CrossAxisAlignment.end
                   : CrossAxisAlignment.start,
               children: [
-                // Sender label
                 if (!isMe)
                   Padding(
                     padding: const EdgeInsets.only(left: 4, bottom: 2),
@@ -2008,7 +2297,6 @@ class MessageBubble extends StatelessWidget {
                       ),
                     ),
                   ),
-                // Message content based on type
                 _buildMessageContent(context, isMe),
               ],
             ),
@@ -2115,7 +2403,7 @@ class MessageBubble extends StatelessWidget {
         onOpen: (link) async {
           final Uri url = Uri.parse(link.url);
           if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-            // URL launch failed - silently ignore
+            // URL launch failed
           }
         },
       ),
