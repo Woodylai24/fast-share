@@ -105,7 +105,7 @@ class ShareHandler {
 
               sentFiles.add({
                 'filename': filename,
-                'url': lastIp != null ? 'http://$lastIp:$lastHttpPort/files/$filename' : filename,
+                'url': 'file://$filePath',
               });
             }
           } catch (e) {
