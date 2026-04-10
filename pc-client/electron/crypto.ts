@@ -57,12 +57,14 @@ export class CryptoManager {
     });
 
     // Derive AES-256 key using HKDF-SHA256
-    this.aesKey = crypto.hkdfSync(
-      "sha256",
-      this.sharedKey,
-      Buffer.alloc(0), // no salt
-      Buffer.from("fast-share-e2ee-v1", "utf8"), // info/context string
-      32, // 256-bit key
+    this.aesKey = Buffer.from(
+      crypto.hkdfSync(
+        "sha256",
+        this.sharedKey,
+        Buffer.alloc(0), // no salt
+        Buffer.from("fast-share-e2ee-v1", "utf8"), // info/context string
+        32, // 256-bit key
+      ),
     );
   }
 
