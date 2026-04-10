@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -14,6 +14,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'share_handler.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_linkify/flutter_linkify.dart';
 import 'firebase_options.dart';
@@ -941,6 +942,10 @@ class _ConnectingScreenState extends State<ConnectingScreen> {
       );
 
       await ConnectionHistoryService.saveConnection(entry);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_connected_ip', widget.ip);
+      await prefs.setInt('last_connected_port', widget.port);
+      await prefs.setInt('last_connected_http_port', widget.httpPort);
       debugPrint(
         '[DEBUG] Connection saved to history: ${entry.ip}:${entry.port}, network: ${entry.networkName}',
       );
@@ -1179,6 +1184,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     _loadSavedMessages();
     _connect();
     _startClipboardPolling();
+    _setupShareHandler();
   }
 
   Future<void> _initDeviceId() async {
@@ -1567,6 +1573,40 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     }
   }
 
+  void _setupShareHandler() {
+    ShareHandler.setupListener();
+    ShareHandler.setContext(context);
+    ShareHandler.registerSendCallback((data) {
+      _sendJson(data);
+      if (data['type'] == 'text' && data['content'] != null) {
+        setState(() {
+          messages.add(Message.text(content: data['content'] as String, sender: 'Me'));
+        });
+        _saveMessages();
+        _scrollToBottom();
+      }
+    });
+    ShareHandler.registerLocalMessageCallback((fileInfo) {
+      final filename = fileInfo['filename'] ?? 'Unknown';
+      final url = fileInfo['url'] ?? '';
+      final isImage = filename.toLowerCase().endsWith('.jpg') ||
+          filename.toLowerCase().endsWith('.jpeg') ||
+          filename.toLowerCase().endsWith('.png') ||
+          filename.toLowerCase().endsWith('.gif') ||
+          filename.toLowerCase().endsWith('.webp') ||
+          filename.toLowerCase().endsWith('.bmp');
+      setState(() {
+        if (isImage) {
+          messages.add(Message.image(filename: filename, url: url, sender: 'Me'));
+        } else {
+          messages.add(Message.file(filename: filename, url: url, sender: 'Me'));
+        }
+      });
+      _saveMessages();
+      _scrollToBottom();
+    });
+  }
+
   void _sendText() {
     if (_textController.text.isNotEmpty && !_isDisconnected) {
       final text = _textController.text;
@@ -1746,6 +1786,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _clipboardPollTimer?.cancel();
+    ShareHandler.unregisterSendCallback();
     _subscription?.cancel();
     channel.sink.close();
     _textController.dispose();
@@ -1922,10 +1963,7 @@ class MessageBubble extends StatelessWidget {
   }
 
   bool get _showTimestamp {
-    if (previousMessage == null) return true;
-    // Show timestamp if more than 5 minutes gap or different sender
-    final diff = message.timestamp.difference(previousMessage!.timestamp);
-    return diff.inMinutes > 5 || message.sender != previousMessage!.sender;
+    return true; // Always show timestamp on every message
   }
 
   @override
