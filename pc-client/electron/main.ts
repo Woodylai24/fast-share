@@ -8,6 +8,7 @@ import ip from "ip";
 import fs from "fs";
 import os from "os";
 import admin from "firebase-admin";
+import { CryptoManager, isUnencryptedType } from "./crypto";
 
 // --- Initialize Firebase Admin SDK ---
 // Load service account from file
@@ -40,6 +41,9 @@ try {
 // --- Configuration ---
 const WS_PORT = 8080;
 const HTTP_PORT = 8081;
+const FILE_CHUNK_SIZE = 64 * 1024; // 64KB chunks
+const KEY_EXCHANGE_TIMEOUT_MS = 5000; // 5 seconds
+const CHUNK_REASSEMBLY_TIMEOUT_MS = 30000; // 30 seconds
 
 let mainWindow: BrowserWindow | null = null;
 let wss: WebSocketServer | null = null;
@@ -48,13 +52,24 @@ let httpServer: http.Server | null = null;
 // --- Client Tracking ---
 interface ClientInfo {
   ws: WebSocket;
-  deviceId?: string; // Optional device identifier for reconnection
+  deviceId?: string;
+  crypto: CryptoManager;
+  keyExchangeComplete: boolean;
+  keyExchangeTimer?: ReturnType<typeof setTimeout>;
+  // File chunk reassembly state
+  incomingFile?: {
+    filename: string;
+    fileSize: number;
+    mimeType: string;
+    chunks: Buffer[];
+    receivedBytes: number;
+    timer: ReturnType<typeof setTimeout>;
+  };
 }
 
 const connectedClients: Set<ClientInfo> = new Set();
 
 // --- Message Queuing for Offline Clients ---
-// Stores messages for clients that are temporarily disconnected (e.g., mobile in background)
 interface QueuedMessage {
   type: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -73,8 +88,8 @@ setInterval(() => {
   const currentText = clipboard.readText();
   if (currentText && currentText !== lastClipboardText) {
     lastClipboardText = currentText;
-    broadcastToClients({ type: "clipboard", content: currentText });
-    console.log("[DEBUG] Clipboard changed, broadcasting to clients");
+    sendEncryptedToClients({ type: "clipboard", content: currentText });
+    console.log("[DEBUG] Clipboard changed, broadcasting to clients (encrypted)");
   }
 }, 1000);
 
@@ -83,7 +98,7 @@ app.commandLine.appendSwitch("remote-debugging-port", "9222");
 
 // --- Helper Functions ---
 function getLocalIp() {
-  return ip.address(); // Keep for default usage if needed, but better to use dynamic IPs
+  return ip.address();
 }
 
 function getLocalIps() {
@@ -122,7 +137,7 @@ function queueMessage(
 
 function getQueuedMessages(deviceId: string): QueuedMessage[] {
   const messages = messageQueue.get(deviceId) || [];
-  messageQueue.delete(deviceId); // Clear queue after retrieval
+  messageQueue.delete(deviceId);
   return messages;
 }
 
@@ -163,7 +178,40 @@ async function sendPushNotification(
   }
 }
 
-// --- Broadcast to all clients ---
+// --- Encrypt and send to a single client ---
+function sendEncrypted(client: ClientInfo, data: object) {
+  if (client.ws.readyState !== WebSocket.OPEN) return;
+
+  if (!client.keyExchangeComplete || !client.crypto.isReady()) {
+    // Key exchange not done — fall back to plaintext
+    client.ws.send(JSON.stringify(data));
+    return;
+  }
+
+  try {
+    const encrypted = client.crypto.encrypt(data);
+    client.ws.send(
+      JSON.stringify({
+        type: "encrypted",
+        ...encrypted,
+      }),
+    );
+  } catch (error) {
+    console.error("[DEBUG] Failed to encrypt message, sending plaintext:", error);
+    client.ws.send(JSON.stringify(data));
+  }
+}
+
+// --- Broadcast encrypted to all clients ---
+function sendEncryptedToClients(message: object, excludeClient?: ClientInfo) {
+  connectedClients.forEach((client) => {
+    if (client.ws.readyState === WebSocket.OPEN && client !== excludeClient) {
+      sendEncrypted(client, message);
+    }
+  });
+}
+
+// --- Legacy broadcast (plaintext, for queued messages fallback) ---
 function broadcastToClients(message: object, excludeWs?: WebSocket) {
   wss?.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN && client !== excludeWs) {
@@ -172,26 +220,32 @@ function broadcastToClients(message: object, excludeWs?: WebSocket) {
   });
 }
 
+// --- File chunk reassembly cleanup ---
+function cleanupFileReassembly(client: ClientInfo) {
+  if (client.incomingFile) {
+    clearTimeout(client.incomingFile.timer);
+    client.incomingFile = undefined;
+  }
+}
+
 // --- Server Setup ---
 function startServers() {
-  // Log all available IPs for debugging
   const allIps = getLocalIps();
   console.log("=== SERVER STARTUP DIAGNOSTICS ===");
   console.log("[DEBUG] Available network interfaces:", allIps);
   console.log("[DEBUG] WebSocket Port:", WS_PORT);
   console.log("[DEBUG] HTTP Port:", HTTP_PORT);
 
-  // 1. HTTP Server (for file transfer)
+  // 1. HTTP Server (fallback for file transfer)
   const expressApp = express();
   expressApp.use(cors());
   expressApp.use(express.json());
 
-  // Shared directory for files (both uploads from mobile and files offered by PC)
   const sharedDir = path.join(os.homedir(), "FastShare");
   if (!fs.existsSync(sharedDir)) fs.mkdirSync(sharedDir, { recursive: true });
   console.log("[DEBUG] Shared directory:", sharedDir);
 
-  // Endpoint to receive files from Mobile
+  // Endpoint to receive files from Mobile (legacy HTTP fallback)
   expressApp.post("/upload", (req, res) => {
     console.log("[DEBUG] HTTP upload request received from:", req.ip);
     const filename =
@@ -203,12 +257,10 @@ function startServers() {
 
     fileStream.on("finish", () => {
       console.log(`[DEBUG] File saved to ${savePath}`);
-      // Notify Renderer
       mainWindow?.webContents.send("file-received", {
         filename,
         path: savePath,
       });
-      // Note: Don't broadcast to mobile - they already add the file optimistically on their side.
       res.status(200).send("Upload complete");
     });
 
@@ -218,7 +270,7 @@ function startServers() {
     });
   });
 
-  // Endpoint to serve files to Mobile
+  // Endpoint to serve files to Mobile (legacy HTTP fallback)
   expressApp.use("/files", express.static(sharedDir));
 
   httpServer = expressApp.listen(HTTP_PORT, () => {
@@ -231,7 +283,7 @@ function startServers() {
   });
   console.log("[DEBUG] HTTP Server address:", httpServer.address());
 
-  // 2. WebSocket Server (for signaling & text)
+  // 2. WebSocket Server (with E2EE)
   console.log("[DEBUG] Starting WebSocket Server on port", WS_PORT);
   wss = new WebSocketServer({ port: WS_PORT });
 
@@ -248,17 +300,26 @@ function startServers() {
   });
 
   wss.on("connection", (ws: WebSocket, req) => {
-    // Log the client's IP address
     const clientIp = req.socket.remoteAddress || "unknown";
     console.log("[DEBUG] === MOBILE CLIENT CONNECTED ===");
     console.log("[DEBUG] Client IP:", clientIp);
     console.log("[DEBUG] Connection time:", new Date().toISOString());
 
-    // Track this client
+    // Create client info with a new ephemeral CryptoManager
     const clientInfo: ClientInfo = {
       ws,
+      crypto: new CryptoManager(),
+      keyExchangeComplete: false,
     };
     connectedClients.add(clientInfo);
+
+    // Set a timeout for key exchange — close connection if not completed
+    clientInfo.keyExchangeTimer = setTimeout(() => {
+      if (!clientInfo.keyExchangeComplete) {
+        console.error("[DEBUG] Key exchange timeout — closing connection");
+        ws.close(4001, "Key exchange timeout");
+      }
+    }, KEY_EXCHANGE_TIMEOUT_MS);
 
     ws.on("message", (message: string) => {
       console.log("[DEBUG] Received message:", message.toString());
@@ -266,16 +327,14 @@ function startServers() {
         const data = JSON.parse(message.toString());
         console.log("[DEBUG] Parsed message type:", data.type);
 
-        // Handle handshake from mobile - don't forward to renderer
+        // --- Unencrypted message types ---
         if (data.type === "handshake") {
           console.log("[DEBUG] Received handshake from mobile:", data.device);
 
-          // Store device ID if provided for reconnection support
           if (data.deviceId) {
             clientInfo.deviceId = data.deviceId;
             console.log("[DEBUG] Device ID:", data.deviceId);
 
-            // Store FCM token if provided
             if (data.fcmToken) {
               deviceFcmTokens.set(data.deviceId, data.fcmToken);
               console.log(
@@ -284,7 +343,7 @@ function startServers() {
               );
             }
 
-            // Send any queued messages for this device
+            // Send queued messages (they may be plaintext for legacy compat)
             const queuedMessages = getQueuedMessages(data.deviceId);
             if (queuedMessages.length > 0) {
               console.log(
@@ -292,6 +351,7 @@ function startServers() {
                 queuedMessages.length,
                 "queued messages to device",
               );
+              // Queued messages are sent as plaintext since key exchange isn't done yet
               queuedMessages.forEach((msg) => {
                 if (ws.readyState === WebSocket.OPEN) {
                   ws.send(JSON.stringify(msg.data));
@@ -299,10 +359,45 @@ function startServers() {
               });
             }
           }
-          return; // Don't forward mobile's handshake to renderer
+
+          // Respond with handshake + our public key for key exchange
+          ws.send(
+            JSON.stringify({
+              type: "handshake",
+              message: "Connected to PC",
+            }),
+          );
+
+          // Initiate key exchange — send our public key
+          const ourPubKey = clientInfo.crypto.getPublicKeyBase64();
+          ws.send(
+            JSON.stringify({
+              type: "key-exchange",
+              publicKey: ourPubKey,
+            }),
+          );
+          console.log("[DEBUG] Sent key-exchange with public key");
+          return;
         }
 
-        // Handle reconnect message from mobile (after being in background)
+        if (data.type === "key-exchange") {
+          console.log("[DEBUG] Received key-exchange from mobile");
+          try {
+            clientInfo.crypto.computeSharedSecret(data.publicKey);
+            clientInfo.keyExchangeComplete = true;
+            // Clear key exchange timeout
+            if (clientInfo.keyExchangeTimer) {
+              clearTimeout(clientInfo.keyExchangeTimer);
+              clientInfo.keyExchangeTimer = undefined;
+            }
+            console.log("[DEBUG] Key exchange complete — encrypted channel established");
+          } catch (error) {
+            console.error("[DEBUG] Key exchange failed:", error);
+            ws.close(4002, "Key exchange failed");
+          }
+          return;
+        }
+
         if (data.type === "reconnect") {
           console.log("[DEBUG] Client reconnecting, device ID:", data.deviceId);
           if (data.deviceId) {
@@ -321,38 +416,76 @@ function startServers() {
               });
             }
           }
+          // Re-do key exchange on reconnect — send new public key
+          const newClientInfo: ClientInfo = {
+            ws,
+            deviceId: clientInfo.deviceId,
+            crypto: new CryptoManager(),
+            keyExchangeComplete: false,
+          };
+          // Replace the client info in the set
+          connectedClients.delete(clientInfo);
+          connectedClients.add(newClientInfo);
+
+          // Set key exchange timeout for reconnected client
+          newClientInfo.keyExchangeTimer = setTimeout(() => {
+            if (!newClientInfo.keyExchangeComplete) {
+              console.error("[DEBUG] Key exchange timeout on reconnect — closing connection");
+              ws.close(4001, "Key exchange timeout");
+            }
+          }, KEY_EXCHANGE_TIMEOUT_MS);
+
+          ws.send(
+            JSON.stringify({
+              type: "key-exchange",
+              publicKey: newClientInfo.crypto.getPublicKeyBase64(),
+            }),
+          );
+          console.log("[DEBUG] Sent new key-exchange for reconnect");
           return;
         }
 
-        // Handle disconnect message from mobile
         if (data.type === "disconnect") {
           console.log("[DEBUG] Client sent disconnect message:", data.reason);
-          // Notify renderer
           mainWindow?.webContents.send("ws-disconnect", {
             reason: data.reason || "Mobile client disconnected",
           });
-          // Close the connection
+          cleanupFileReassembly(clientInfo);
           connectedClients.delete(clientInfo);
           ws.close();
           return;
         }
 
-        // Forward other messages to Renderer
-        if (data.type === "clipboard") {
-          clipboard.writeText(data.content);
-          lastClipboardText = data.content; // Avoid loopback
-          console.log("[DEBUG] Received clipboard from mobile");
-          // Show Windows notification
-          const { Notification } = require("electron");
-          if (Notification.isSupported()) {
-            new Notification({
-              title: "Fast Share - Clipboard Sync",
-              body: data.content.length > 100 ? data.content.substring(0, 100) + "..." : data.content,
-              silent: false,
-            }).show();
+        // --- Encrypted message handling ---
+        if (data.type === "encrypted") {
+          if (!clientInfo.keyExchangeComplete) {
+            console.error("[DEBUG] Received encrypted message before key exchange — dropping");
+            return;
           }
+
+          const decrypted = clientInfo.crypto.decrypt({
+            nonce: data.nonce,
+            payload: data.payload,
+            tag: data.tag,
+          });
+
+          if (!decrypted) {
+            console.error("[DEBUG] Decryption failed — dropping message");
+            return;
+          }
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const inner = decrypted as any;
+          console.log("[DEBUG] Decrypted inner message type:", inner.type);
+
+          // Process the decrypted inner message
+          processDecryptedMessage(clientInfo, inner);
+          return;
         }
-        mainWindow?.webContents.send("ws-message", data);
+
+        // Any other plaintext message (legacy fallback for pre-key-exchange)
+        console.log("[DEBUG] Processing plaintext message:", data.type);
+        processDecryptedMessage(clientInfo, data);
       } catch (error) {
         console.error("[DEBUG] Failed to parse WS message", error);
       }
@@ -366,20 +499,17 @@ function startServers() {
         reason.toString(),
       );
 
-      // Remove from tracked clients
+      // Clean up timers
+      if (clientInfo.keyExchangeTimer) {
+        clearTimeout(clientInfo.keyExchangeTimer);
+      }
+      cleanupFileReassembly(clientInfo);
       connectedClients.delete(clientInfo);
 
-      // Only notify renderer about intentional disconnects
-      // Code 1006 = abnormal closure (mobile app went to background)
-      // Code 1000 = normal closure
-      // Code 1001 = going away (browser closing)
       const isAbnormalClosure = code === 1006;
       const isIntentionalDisconnect = code === 1000 || code === 1001;
 
       if (!isAbnormalClosure) {
-        // Notify renderer about disconnect only for intentional disconnects
-        // For abnormal closures (mobile in background), we keep the UI connected
-        // so the user can still send messages (which will be queued and sent via push)
         mainWindow?.webContents.send("ws-disconnect", {
           reason: isIntentionalDisconnect
             ? "Connection closed"
@@ -387,7 +517,6 @@ function startServers() {
           deviceId: clientInfo.deviceId,
         });
       } else {
-        // For abnormal closures, just log it - the mobile will reconnect when back in foreground
         console.log(
           "[DEBUG] Abnormal closure detected - mobile likely in background. Keeping UI connected.",
         );
@@ -399,16 +528,11 @@ function startServers() {
 
     ws.on("error", (error) => {
       console.error("[DEBUG] WebSocket ERROR:", error);
+      if (clientInfo.keyExchangeTimer) {
+        clearTimeout(clientInfo.keyExchangeTimer);
+      }
+      cleanupFileReassembly(clientInfo);
       connectedClients.delete(clientInfo);
-    });
-
-    // Send handshake to client
-    ws.send(JSON.stringify({ type: "handshake", message: "Connected to PC" }));
-
-    // Notify renderer that a client has connected
-    mainWindow?.webContents.send("ws-message", {
-      type: "handshake",
-      message: "Mobile Connected",
     });
   });
 
@@ -416,6 +540,135 @@ function startServers() {
     `[DEBUG] WebSocket Server initialized on ws://${getLocalIp()}:${WS_PORT}`,
   );
   console.log("=== END SERVER STARTUP ===");
+}
+
+/**
+ * Process a decrypted (or plaintext legacy) message from a mobile client.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function processDecryptedMessage(clientInfo: ClientInfo, data: any) {
+  const msgType = data.type;
+
+  switch (msgType) {
+    case "clipboard": {
+      clipboard.writeText(data.content);
+      lastClipboardText = data.content;
+      console.log("[DEBUG] Received clipboard from mobile (encrypted)");
+      const { Notification } = require("electron");
+      if (Notification.isSupported()) {
+        new Notification({
+          title: "Fast Share - Clipboard Sync",
+          body:
+            data.content.length > 100
+              ? data.content.substring(0, 100) + "..."
+              : data.content,
+          silent: false,
+        }).show();
+      }
+      mainWindow?.webContents.send("ws-message", data);
+      break;
+    }
+
+    case "text": {
+      mainWindow?.webContents.send("ws-message", data);
+      break;
+    }
+
+    case "file-start": {
+      // Incoming file transfer over encrypted WS
+      console.log(
+        `[DEBUG] File transfer starting: ${data.filename} (${data.fileSize} bytes)`,
+      );
+      // Clean up any previous partial file
+      cleanupFileReassembly(clientInfo);
+
+      clientInfo.incomingFile = {
+        filename: data.filename,
+        fileSize: data.fileSize,
+        mimeType: data.mimeType || "application/octet-stream",
+        chunks: [],
+        receivedBytes: 0,
+        timer: setTimeout(() => {
+          console.error(
+            `[DEBUG] File chunk reassembly timeout for ${clientInfo.incomingFile?.filename}`,
+          );
+          cleanupFileReassembly(clientInfo);
+        }, CHUNK_REASSEMBLY_TIMEOUT_MS),
+      };
+      break;
+    }
+
+    case "file-chunk": {
+      if (!clientInfo.incomingFile) {
+        console.error("[DEBUG] Received file-chunk without file-start — dropping");
+        return;
+      }
+      const chunkData = Buffer.from(data.data, "base64");
+      clientInfo.incomingFile.chunks.push(chunkData);
+      clientInfo.incomingFile.receivedBytes += chunkData.length;
+
+      // Reset the reassembly timer on each chunk
+      clearTimeout(clientInfo.incomingFile.timer);
+      clientInfo.incomingFile.timer = setTimeout(() => {
+        console.error(
+          `[DEBUG] File chunk reassembly timeout for ${clientInfo.incomingFile?.filename}`,
+        );
+        cleanupFileReassembly(clientInfo);
+      }, CHUNK_REASSEMBLY_TIMEOUT_MS);
+      break;
+    }
+
+    case "file-end": {
+      if (!clientInfo.incomingFile) {
+        console.error("[DEBUG] Received file-end without file-start — ignoring");
+        return;
+      }
+
+      const fileTransfer = clientInfo.incomingFile;
+      clearTimeout(fileTransfer.timer);
+
+      // Verify checksum
+      const assembled = Buffer.concat(fileTransfer.chunks);
+      const checksum = CryptoManager.sha256(assembled);
+
+      if (checksum !== data.checksum) {
+        console.error(
+          `[DEBUG] File checksum mismatch for ${fileTransfer.filename}: expected ${data.checksum}, got ${checksum}`,
+        );
+        clientInfo.incomingFile = undefined;
+        return;
+      }
+
+      // Save file to shared directory
+      const sharedDir = path.join(os.homedir(), "FastShare");
+      const savePath = path.join(sharedDir, fileTransfer.filename);
+      fs.writeFileSync(savePath, assembled);
+
+      console.log(`[DEBUG] File received via encrypted WS: ${savePath}`);
+
+      // Notify renderer
+      mainWindow?.webContents.send("file-received", {
+        filename: fileTransfer.filename,
+        path: savePath,
+      });
+
+      clientInfo.incomingFile = undefined;
+      break;
+    }
+
+    // Legacy file/image messages (HTTP-based)
+    case "file":
+    case "image": {
+      mainWindow?.webContents.send("ws-message", data);
+      break;
+    }
+
+    default: {
+      // Forward everything else to renderer
+      mainWindow?.webContents.send("ws-message", data);
+      break;
+    }
+  }
 }
 
 // --- IPC Handlers ---
@@ -459,22 +712,24 @@ function setupIpc() {
 
   ipcMain.on("send-text", (event, text) => {
     const message = { type: "text", content: text };
-    let sent = false;
 
-    // Broadcast to all connected mobile clients
-    wss?.clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify(message));
+    // Send encrypted to all connected clients
+    let sent = false;
+    connectedClients.forEach((client) => {
+      if (client.ws.readyState === WebSocket.OPEN && client.keyExchangeComplete) {
+        sendEncrypted(client, message);
+        sent = true;
+      } else if (client.ws.readyState === WebSocket.OPEN) {
+        // Key exchange not complete, send plaintext as fallback
+        client.ws.send(JSON.stringify(message));
         sent = true;
       }
     });
 
     // If no clients connected, queue the message and send push notification
     if (!sent) {
-      // Queue for all known devices
       deviceFcmTokens.forEach(async (fcmToken, deviceId) => {
         queueMessage(deviceId, "text", message);
-        // Send push notification to wake up the app
         await sendPushNotification(fcmToken, {
           title: "New Message",
           body: text.length > 50 ? text.substring(0, 50) + "..." : text,
@@ -490,7 +745,7 @@ function setupIpc() {
   ipcMain.on("disconnect-client", () => {
     console.log("[DEBUG] PC Client requested disconnect");
 
-    // Send disconnect message to all mobile clients
+    // Send disconnect message to all mobile clients (unencrypted)
     broadcastToClients({
       type: "disconnect",
       reason: "PC client disconnected",
@@ -504,6 +759,12 @@ function setupIpc() {
     });
 
     // Clear tracked clients
+    connectedClients.forEach((client) => {
+      cleanupFileReassembly(client);
+      if (client.keyExchangeTimer) {
+        clearTimeout(client.keyExchangeTimer);
+      }
+    });
     connectedClients.clear();
   });
 
@@ -520,7 +781,6 @@ function setupIpc() {
   });
 
   ipcMain.on("offer-file", (event, filePath, ip) => {
-    // 1. Copy file to shared dir (same directory as uploads)
     const fileName = path.basename(filePath);
     const sharedDir = path.join(os.homedir(), "FastShare");
     if (!fs.existsSync(sharedDir)) fs.mkdirSync(sharedDir, { recursive: true });
@@ -528,14 +788,11 @@ function setupIpc() {
     const destPath = path.join(sharedDir, fileName);
     fs.copyFileSync(filePath, destPath);
 
-    // 2. Create URL
-    // Use the IP passed from the frontend (selected by user) or fallback to detected one
     const hostIp = ip || getLocalIp();
     const fileUrl = `http://${hostIp}:${HTTP_PORT}/files/${encodeURIComponent(
       fileName,
     )}`;
 
-    // 3. Determine message type based on file extension
     const imageExtensions = [
       ".jpg",
       ".jpeg",
@@ -548,26 +805,41 @@ function setupIpc() {
     const ext = path.extname(fileName).toLowerCase();
     const messageType = imageExtensions.includes(ext) ? "image" : "file";
 
-    const message = {
+    // Try encrypted chunked file transfer first, fall back to legacy URL-based offer
+    let sentViaWs = false;
+    connectedClients.forEach((client) => {
+      if (
+        client.ws.readyState === WebSocket.OPEN &&
+        client.keyExchangeComplete
+      ) {
+        // Send file via encrypted chunked WS transfer
+        sendFileEncrypted(client, destPath, fileName, messageType);
+        sentViaWs = true;
+      }
+    });
+
+    // Also offer legacy URL-based file for clients without key exchange
+    const legacyMessage = {
       type: messageType,
       filename: fileName,
       url: fileUrl,
     };
 
-    // 4. Broadcast Offer
-    let sent = false;
-    wss?.clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify(message));
-        sent = true;
+    let sentLegacy = false;
+    connectedClients.forEach((client) => {
+      if (
+        client.ws.readyState === WebSocket.OPEN &&
+        !client.keyExchangeComplete
+      ) {
+        client.ws.send(JSON.stringify(legacyMessage));
+        sentLegacy = true;
       }
     });
 
-    // 5. If no clients connected, queue the message and send push notification
-    if (!sent) {
+    // If no clients connected, queue and send push notification
+    if (!sentViaWs && !sentLegacy) {
       deviceFcmTokens.forEach(async (fcmToken, deviceId) => {
-        queueMessage(deviceId, messageType, message);
-        // Send push notification to wake up the app
+        queueMessage(deviceId, messageType, legacyMessage);
         await sendPushNotification(fcmToken, {
           title: messageType === "image" ? "Image Received" : "File Received",
           body: fileName,
@@ -582,15 +854,88 @@ function setupIpc() {
   });
 }
 
+/**
+ * Send a file via encrypted chunked WebSocket transfer.
+ */
+function sendFileEncrypted(
+  client: ClientInfo,
+  filePath: string,
+  fileName: string,
+  messageType: string,
+) {
+  try {
+    const fileBuffer = fs.readFileSync(filePath);
+    const fileSize = fileBuffer.length;
+    const mimeType = getMimeType(fileName);
+    const checksum = CryptoManager.sha256(fileBuffer);
+
+    // Send file-start
+    sendEncrypted(client, {
+      type: "file-start",
+      filename: fileName,
+      fileSize,
+      mimeType,
+    });
+
+    // Send file-chunks
+    let offset = 0;
+    let seq = 0;
+    while (offset < fileSize) {
+      const end = Math.min(offset + FILE_CHUNK_SIZE, fileSize);
+      const chunk = fileBuffer.subarray(offset, end);
+      sendEncrypted(client, {
+        type: "file-chunk",
+        seq,
+        data: chunk.toString("base64"),
+      });
+      offset = end;
+      seq++;
+    }
+
+    // Send file-end
+    sendEncrypted(client, {
+      type: "file-end",
+      filename: fileName,
+      checksum,
+    });
+
+    console.log(
+      `[DEBUG] File sent via encrypted WS: ${fileName} (${fileSize} bytes, ${seq} chunks)`,
+    );
+  } catch (error) {
+    console.error(`[DEBUG] Failed to send file via encrypted WS: ${error}`);
+  }
+}
+
+function getMimeType(filename: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  const mimeMap: Record<string, string> = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".pdf": "application/pdf",
+    ".zip": "application/zip",
+    ".txt": "text/plain",
+    ".json": "application/json",
+    ".mp4": "video/mp4",
+    ".mp3": "audio/mpeg",
+  };
+  return mimeMap[ext] || "application/octet-stream";
+}
+
 // --- Electron Window ---
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 900,
     height: 600,
-    frame: false, // Remove default window frame
-    transparent: false, // Keep false for resizability
-    backgroundColor: "#242424", // Match app background
-    resizable: true, // Allow window resizing
+    frame: false,
+    transparent: false,
+    backgroundColor: "#242424",
+    resizable: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,
@@ -605,9 +950,6 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
   }
 }
-
-
-
 
 app.whenReady().then(() => {
   setupIpc();
