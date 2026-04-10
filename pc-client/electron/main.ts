@@ -377,6 +377,12 @@ function startServers() {
             }),
           );
           console.log("[DEBUG] Sent key-exchange with public key");
+
+          // Notify renderer that a client has connected
+          mainWindow?.webContents.send("ws-message", {
+            type: "handshake",
+            message: "Mobile Connected",
+          });
           return;
         }
 
