@@ -394,16 +394,15 @@ function App() {
       // No system message needed
     });
 
-    // Listen for files (received via HTTP upload from mobile) - returns cleanup function
+    // Listen for files (received via encrypted WS from mobile)
     const cleanupFileReceived = window.electronAPI.onFileReceived((file) => {
       // Determine if it's an image
       const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(file.filename);
       const msgId = generateId();
 
-      // Create HTTP URL for the file
+      // Use localhost-only URL (HTTP server bound to 127.0.0.1)
       const httpPort = connectionInfo?.httpPort || 8081;
-      const hostIp = selectedIp || "localhost";
-      const fileUrl = `http://${hostIp}:${httpPort}/files/${encodeURIComponent(file.filename)}`;
+      const fileUrl = `http://localhost:${httpPort}/files/${encodeURIComponent(file.filename)}`;
 
       const newMessage: Message = {
         id: msgId,
@@ -475,10 +474,8 @@ function App() {
         if (filePath) {
           window.electronAPI.offerFile(filePath, selectedIp);
           const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(file.name);
-          // Create HTTP URL for the file (same pattern as onFileReceived)
           const httpPort = connectionInfo?.httpPort || 8081;
-          const hostIp = selectedIp || "localhost";
-          const fileUrl = `http://${hostIp}:${httpPort}/files/${encodeURIComponent(file.name)}`;
+          const fileUrl = `http://localhost:${httpPort}/files/${encodeURIComponent(file.name)}`;
           const newMessage: Message = {
             id: generateId(),
             type: isImage ? MessageType.IMAGE : MessageType.FILE,
@@ -502,10 +499,8 @@ function App() {
         // Extract filename from path for display
         const fileName = filePath.split(/[/\\]/).pop() || filePath;
         const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(fileName);
-        // Create HTTP URL for the file (same pattern as onFileReceived)
         const httpPort = connectionInfo?.httpPort || 8081;
-        const hostIp = selectedIp || "localhost";
-        const fileUrl = `http://${hostIp}:${httpPort}/files/${encodeURIComponent(fileName)}`;
+        const fileUrl = `http://localhost:${httpPort}/files/${encodeURIComponent(fileName)}`;
         const newMessage: Message = {
           id: generateId(),
           type: isImage ? MessageType.IMAGE : MessageType.FILE,
