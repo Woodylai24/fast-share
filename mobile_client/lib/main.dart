@@ -1423,6 +1423,11 @@ class _ConnectedScreenState extends State<ConnectedScreen>
         }
         break;
 
+      case 'clipboard':
+        final clipboardContent = data['content'] ?? '';
+        _showClipboardDialog(clipboardContent);
+        break;
+
       // Legacy support for file_offer
       case 'file_offer':
         final filename = data['filename'] ?? 'Unknown file';
@@ -1441,6 +1446,33 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     }
 
     _scrollToBottom();
+  }
+
+  void _showClipboardDialog(String content) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clipboard Sync'),
+        content: Text('Received from PC: $content'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Ignore'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: content));
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Copied to mobile clipboard')),
+              );
+            },
+            child: const Text('Copy to Mobile'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _handleDisconnect(String reason) {
