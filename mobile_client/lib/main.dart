@@ -1994,9 +1994,8 @@ class _ConnectedScreenState extends State<ConnectedScreen>
         caseSensitive: false,
       ).hasMatch(filename);
 
-      // Create the file URL (for display, actual transfer is via WS)
-      final fileUrl =
-          'http://${widget.ip}:${widget.httpPort}/files/${Uri.encodeComponent(filename)}';
+      // Use local file path for display (actual transfer is via encrypted WS)
+      final fileUrl = 'file://${result.files.single.path}';
 
       final message = isImage
           ? Message.image(filename: filename, url: fileUrl, sender: 'Me')
