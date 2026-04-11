@@ -32,6 +32,10 @@ export interface IElectronAPI {
     callback: (file: { filename: string; path: string }) => void,
   ) => () => void;
   getPathForFile: (file: File) => string;
+  // AI Settings
+  getAISettings: () => Promise<{ apiKey: string | null; provider: string; model: string }>;
+  saveAISettings: (settings: { apiKey?: string; provider?: string; model?: string }) => Promise<{ success: boolean }>;
+  fetchModels: () => Promise<{ id: string; name: string }[] | { error: string }>;
 }
 
 declare global {

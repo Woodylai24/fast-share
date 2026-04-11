@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, clipboard } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell, clipboard, safeStorage } from "electron";
 import path from "path";
 import { WebSocketServer, WebSocket } from "ws";
 import express from "express";
@@ -9,6 +9,18 @@ import fs from "fs";
 import os from "os";
 import admin from "firebase-admin";
 import { CryptoManager, isUnencryptedType } from "./crypto";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const ElectronStore = require("electron-store").default;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const aiSettingsStore: { get: (key: string) => any; set: (key: string, value: any) => void } = new ElectronStore({
+  name: "fastshare-ai-settings",
+  defaults: {
+    apiKeyEncrypted: "",
+    provider: "openrouter",
+    model: "openrouter/auto",
+  },
+}) as any;
 
 // --- Initialize Firebase Admin SDK ---
 // Load service account from file
@@ -48,6 +60,7 @@ const CHUNK_REASSEMBLY_TIMEOUT_MS = 30000; // 30 seconds
 let mainWindow: BrowserWindow | null = null;
 let wss: WebSocketServer | null = null;
 let httpServer: http.Server | null = null;
+
 
 // --- Client Tracking ---
 interface ClientInfo {
@@ -679,6 +692,93 @@ function processDecryptedMessage(clientInfo: ClientInfo, data: any) {
 
 // --- IPC Handlers ---
 function setupIpc() {
+  // AI Settings handlers
+  ipcMain.handle("get-ai-settings", () => {
+    const apiKeyEncrypted = aiSettingsStore.get("apiKeyEncrypted") as string;
+    const provider = aiSettingsStore.get("provider") as string;
+    const model = aiSettingsStore.get("model") as string;
+
+    let apiKey: string | null = null;
+    if (apiKeyEncrypted) {
+      apiKey = "••••••••"; // masked
+    }
+
+    return { apiKey, provider, model };
+  });
+
+  ipcMain.handle("save-ai-settings", (_event, settings: { apiKey?: string; provider?: string; model?: string }) => {
+    try {
+      if (settings.apiKey !== undefined) {
+        if (safeStorage.isEncryptionAvailable()) {
+          const encrypted = safeStorage.encryptString(settings.apiKey);
+          aiSettingsStore.set("apiKeyEncrypted", encrypted.toString("base64"));
+        } else {
+          console.warn("[AI Settings] safeStorage not available — storing API key in plaintext");
+          aiSettingsStore.set("apiKeyEncrypted", settings.apiKey);
+        }
+      }
+      if (settings.provider !== undefined) {
+        aiSettingsStore.set("provider", settings.provider);
+      }
+      if (settings.model !== undefined) {
+        aiSettingsStore.set("model", settings.model);
+      }
+      return { success: true };
+    } catch (error) {
+      console.error("[AI Settings] Failed to save settings:", error);
+      return { success: false };
+    }
+  });
+
+  ipcMain.handle("fetch-models", async () => {
+    try {
+      // Decrypt API key if available
+      const apiKeyEncrypted = aiSettingsStore.get("apiKeyEncrypted") as string;
+      let apiKey = "";
+      if (apiKeyEncrypted) {
+        if (safeStorage.isEncryptionAvailable()) {
+          try {
+            apiKey = safeStorage.decryptString(Buffer.from(apiKeyEncrypted, "base64"));
+          } catch {
+            // Fallback: might be stored as plaintext
+            apiKey = apiKeyEncrypted;
+          }
+        } else {
+          apiKey = apiKeyEncrypted;
+        }
+      }
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (apiKey) {
+        headers["Authorization"] = `Bearer ${apiKey}`;
+      }
+
+      const response = await fetch("https://openrouter.ai/api/v1/models", {
+        method: "GET",
+        headers,
+      });
+
+      if (!response.ok) {
+        return { error: `Failed to fetch models (HTTP ${response.status})` };
+      }
+
+      const data = await response.json();
+      const models = (data.data || []).map(
+        (m: { id: string; name?: string }) => ({
+          id: m.id,
+          name: m.name || m.id,
+        })
+      );
+
+      return models;
+    } catch (error) {
+      console.error("[AI Settings] Failed to fetch models:", error);
+      return { error: "Failed to fetch models from OpenRouter" };
+    }
+  });
+
   // Window control handlers
   ipcMain.on("window-minimize", () => {
     mainWindow?.minimize();

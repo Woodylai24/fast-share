@@ -40,4 +40,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener("file-received", listener);
   },
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
+  // AI Settings
+  getAISettings: () => ipcRenderer.invoke("get-ai-settings"),
+  saveAISettings: (settings: { apiKey?: string; provider?: string; model?: string }) =>
+    ipcRenderer.invoke("save-ai-settings", settings),
+  fetchModels: () => ipcRenderer.invoke("fetch-models"),
 });

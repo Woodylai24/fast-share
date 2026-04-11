@@ -29,6 +29,11 @@
   opacity: 0.9;
 }
 
+.title-bar-actions {
+  display: flex;
+  -webkit-app-region: no-drag;
+}
+
 .title-bar-controls {
   display: flex;
   -webkit-app-region: no-drag;
@@ -62,6 +67,10 @@
 
 .title-bar-button:hover {
   background: rgba(255, 255, 255, 0.1);
+}
+
+.title-bar-button.settings {
+  width: 40px;
 }
 
 .title-bar-button.close:hover {

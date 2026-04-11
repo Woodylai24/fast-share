@@ -1,0 +1,258 @@
+.ai-settings-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 10000;
+  display: flex;
+  justify-content: flex-end;
+  animation: fadeIn 0.15s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.ai-settings-panel {
+  width: 360px;
+  height: 100%;
+  background: #1a1a1a;
+  border-left: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  animation: slideInRight 0.2s ease;
+  overflow-y: auto;
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.ai-settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+}
+
+.ai-settings-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.ai-settings-close {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: #999;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  padding: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ai-settings-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.ai-settings-divider {
+  height: 1px;
+  background: #333;
+  margin: 0 20px;
+}
+
+.ai-settings-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  flex: 1;
+}
+
+.ai-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-settings-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #ccc;
+}
+
+.ai-settings-select {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background: #242424;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.ai-settings-select:focus {
+  border-color: #007bff;
+}
+
+.ai-settings-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-settings-input {
+  flex: 1;
+  padding: 8px 12px;
+  padding-right: 36px;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background: #242424;
+  color: #fff;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.ai-settings-input:focus {
+  border-color: #007bff;
+}
+
+.ai-settings-input::placeholder {
+  color: #666;
+}
+
+.ai-settings-apikey-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ai-settings-apikey-input-wrap {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.ai-settings-apikey-input-wrap .ai-settings-input {
+  width: 100%;
+  padding-right: 36px;
+}
+
+.ai-settings-eye-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  color: #888;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  transition: color 0.15s;
+  width: 20px;
+  height: 20px;
+}
+
+.ai-settings-eye-btn:hover {
+  color: #fff;
+}
+
+.ai-settings-save-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: none;
+  background: #007bff;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.ai-settings-save-btn:hover {
+  background: #0056b3;
+}
+
+.ai-settings-save-btn:disabled {
+  background: #555;
+  cursor: not-allowed;
+}
+
+.ai-settings-status {
+  font-size: 12px;
+  color: #4caf50;
+  font-weight: 500;
+}
+
+.ai-settings-model-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ai-settings-model-row .ai-settings-select {
+  flex: 1;
+}
+
+.ai-settings-refresh-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background: #242424;
+  color: #ccc;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.ai-settings-refresh-btn:hover {
+  background: #333;
+  color: #fff;
+}
+
+.ai-settings-refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-settings-loading {
+  font-size: 12px;
+  color: #888;
+}
+
+.ai-settings-error {
+  font-size: 12px;
+  color: #ef5350;
+}
+
+.ai-settings-footer {
+  padding: 16px 20px;
+  font-size: 12px;
+  color: #666;
+}
