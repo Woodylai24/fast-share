@@ -8,9 +8,21 @@ import ip from "ip";
 import fs from "fs";
 import os from "os";
 import admin from "firebase-admin";
+import crypto from "crypto";
 import { CryptoManager, isUnencryptedType } from "./crypto";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ElectronStore = require("electron-store").default;
+
+// --- Active Summarize Streams ---
+const activeSummarizeStreams = new Map<string, AbortController>();
+
+// Supported text file extensions for summarization
+const SUMMARIZABLE_EXTENSIONS = new Set([
+  ".txt", ".md", ".json", ".csv", ".log", ".xml", ".yaml", ".yml", ".ini", ".conf",
+  ".cfg", ".toml", ".env", ".sh", ".bat", ".py", ".js", ".ts", ".html", ".css",
+  ".sql", ".rb", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".hpp", ".tsx",
+  ".jsx", ".vue", ".svelte", ".dart", ".php", ".r", ".swift", ".kt",
+]);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const aiSettingsStore: { get: (key: string) => any; set: (key: string, value: any) => void } = new ElectronStore({
@@ -776,6 +788,158 @@ function setupIpc() {
     } catch (error) {
       console.error("[AI Settings] Failed to fetch models:", error);
       return { error: "Failed to fetch models from OpenRouter" };
+    }
+  });
+
+  // --- Summarize IPC handlers ---
+  ipcMain.handle("summarize-content", async (_event, data: { type: string; content: string; filename?: string }) => {
+    try {
+      // Decrypt API key
+      const apiKeyEncrypted = aiSettingsStore.get("apiKeyEncrypted") as string;
+      let apiKey = "";
+      if (apiKeyEncrypted) {
+        if (safeStorage.isEncryptionAvailable()) {
+          try {
+            apiKey = safeStorage.decryptString(Buffer.from(apiKeyEncrypted, "base64"));
+          } catch {
+            apiKey = apiKeyEncrypted;
+          }
+        } else {
+          apiKey = apiKeyEncrypted;
+        }
+      }
+
+      if (!apiKey) {
+        return { error: "no-api-key" };
+      }
+
+      const model = (aiSettingsStore.get("model") as string) || "openrouter/auto";
+
+      // Prepare content
+      let content: string;
+
+      if (data.type === "text") {
+        content = data.content;
+      } else {
+        // File type — check extension
+        const filename = data.filename || "";
+        const ext = path.extname(filename).toLowerCase();
+        if (!SUMMARIZABLE_EXTENSIONS.has(ext)) {
+          return { error: "unsupported-type" };
+        }
+
+        // Read file from ~/FastShare/<filename>
+        const filePath = path.join(os.homedir(), "FastShare", filename);
+        if (!fs.existsSync(filePath)) {
+          return { error: "File not found: " + filename };
+        }
+
+        const stat = fs.statSync(filePath);
+        let fileContent = fs.readFileSync(filePath, "utf-8");
+
+        // Truncate at 100KB
+        const MAX_BYTES = 100 * 1024;
+        if (stat.size > MAX_BYTES) {
+          fileContent = fileContent.substring(0, MAX_BYTES) + "\n\n[Content truncated, showing first 100KB]";
+        }
+        content = fileContent;
+      }
+
+      // Generate stream ID
+      const streamId = crypto.randomUUID();
+      const abortController = new AbortController();
+      activeSummarizeStreams.set(streamId, abortController);
+
+      // Make streaming request to OpenRouter (fire and forget — we handle response async)
+      (async () => {
+        try {
+          const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model,
+              messages: [{ role: "user", content: "Summarize the following content concisely:\n\n" + content }],
+              stream: true,
+            }),
+            signal: abortController.signal,
+          });
+
+          if (!response.ok) {
+            const errText = await response.text();
+            mainWindow?.webContents.send("summarize-error", { streamId, error: `API error (${response.status}): ${errText}` });
+            activeSummarizeStreams.delete(streamId);
+            return;
+          }
+
+          const reader = response.body?.getReader();
+          if (!reader) {
+            mainWindow?.webContents.send("summarize-error", { streamId, error: "No response body" });
+            activeSummarizeStreams.delete(streamId);
+            return;
+          }
+
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || ""; // keep incomplete line
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || !trimmed.startsWith("data: ")) continue;
+
+              const jsonStr = trimmed.slice(6);
+              if (jsonStr === "[DONE]") {
+                mainWindow?.webContents.send("summarize-done", { streamId });
+                activeSummarizeStreams.delete(streamId);
+                return;
+              }
+
+              try {
+                const parsed = JSON.parse(jsonStr);
+                const text = parsed.choices?.[0]?.delta?.content;
+                if (text) {
+                  mainWindow?.webContents.send("summarize-chunk", { streamId, text });
+                }
+              } catch {
+                // Skip malformed JSON lines
+              }
+            }
+          }
+
+          // Stream ended without [DONE]
+          mainWindow?.webContents.send("summarize-done", { streamId });
+          activeSummarizeStreams.delete(streamId);
+        } catch (err: unknown) {
+          if ((err as Error).name === "AbortError") {
+            // Cancelled — clean up silently
+          } else {
+            mainWindow?.webContents.send("summarize-error", { streamId, error: `Network error: ${(err as Error).message}` });
+          }
+          activeSummarizeStreams.delete(streamId);
+        }
+      })();
+
+      return { streamId };
+    } catch (error) {
+      console.error("[Summarize] Error:", error);
+      return { error: `Failed to start summarization: ${(error as Error).message}` };
+    }
+  });
+
+  ipcMain.on("summarize-cancel", (_event, streamId: string) => {
+    const controller = activeSummarizeStreams.get(streamId);
+    if (controller) {
+      controller.abort();
+      activeSummarizeStreams.delete(streamId);
     }
   });
 

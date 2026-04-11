@@ -3,6 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import Linkify from "react-linkify";
 import { TitleBar } from "./TitleBar";
 import { AISettings } from "./AISettings";
+import { SummaryPopup } from "./SummaryPopup";
 import "./App.css";
 
 // Message types as const object
@@ -111,6 +112,8 @@ interface ContextMenuProps {
   onCopy: (message: Message) => void;
   onDelete: (message: Message) => void;
   onOpen: (message: Message) => void;
+  onSummarize: (message: Message) => void;
+  hasApiKey: boolean;
 }
 
 function ContextMenu({
@@ -121,6 +124,8 @@ function ContextMenu({
   onCopy,
   onDelete,
   onOpen,
+  onSummarize,
+  hasApiKey,
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -165,6 +170,17 @@ function ContextMenu({
           📋 Copy
         </button>
       )}
+      <button
+        className="context-menu-item"
+        disabled={!hasApiKey}
+        title={!hasApiKey ? "Set up API key in Settings" : undefined}
+        onClick={() => {
+          onSummarize(message);
+          onClose();
+        }}
+      >
+        🤖 Summarize
+      </button>
       <button
         className="context-menu-item delete"
         onClick={() => {
@@ -311,6 +327,8 @@ const initialMessages = MessageStorage.load();
 
 function App() {
   const [showAISettings, setShowAISettings] = useState(false);
+  const [summaryPopup, setSummaryPopup] = useState<{ isOpen: boolean; message: Message | null }>({ isOpen: false, message: null });
+  const [hasApiKey, setHasApiKey] = useState(false);
   const [connectionInfo, setConnectionInfo] = useState<{
     ips: string[];
     wsPort: number;
@@ -558,6 +576,26 @@ function App() {
     navigator.clipboard.writeText(message.content);
   }, []);
 
+  const checkApiKey = useCallback(async () => {
+    try {
+      const settings = await window.electronAPI.getAISettings();
+      setHasApiKey(!!settings.apiKey);
+    } catch {
+      setHasApiKey(false);
+    }
+  }, []);
+
+  useEffect(() => { checkApiKey(); }, [checkApiKey]);
+
+  const handleSummarize = useCallback((message: Message) => {
+    setSummaryPopup({ isOpen: true, message });
+  }, []);
+
+  const handleCloseSummary = useCallback(() => {
+    setSummaryPopup({ isOpen: false, message: null });
+    checkApiKey();
+  }, [checkApiKey]);
+
   const handleDeleteMessage = useCallback((message: Message) => {
     setMessages((prev) => prev.filter((m) => m.id !== message.id));
   }, []);
@@ -674,7 +712,7 @@ function App() {
         )}
 
         {/* AI Settings Panel */}
-        <AISettings isOpen={showAISettings} onClose={() => setShowAISettings(false)} />
+        <AISettings isOpen={showAISettings} onClose={() => { setShowAISettings(false); checkApiKey(); }} />
 
         {/* Context Menu */}
         {contextMenu && (
@@ -686,8 +724,17 @@ function App() {
             onCopy={handleCopyMessage}
             onDelete={handleDeleteMessage}
             onOpen={handleOpenMessage}
+            onSummarize={handleSummarize}
+            hasApiKey={hasApiKey}
           />
         )}
+
+        {/* Summary Popup */}
+        <SummaryPopup
+          isOpen={summaryPopup.isOpen}
+          message={summaryPopup.message}
+          onClose={handleCloseSummary}
+        />
       </div>
     </>
   );
