@@ -13,8 +13,7 @@ import { CryptoManager, isUnencryptedType } from "./crypto";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ElectronStore = require("electron-store").default;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParseLib = require("pdf-parse");
-const pdfParse = pdfParseLib.PDFParse || pdfParseLib.default || pdfParseLib;
+const pdfParse = require("pdf-parse");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const mammoth = require("mammoth");
 
