@@ -35,7 +35,7 @@ export interface IElectronAPI {
   // AI Settings
   getAISettings: () => Promise<{ apiKey: string | null; provider: string; model: string }>;
   saveAISettings: (settings: { apiKey?: string; provider?: string; model?: string }) => Promise<{ success: boolean }>;
-  fetchModels: () => Promise<{ id: string; name: string }[] | { error: string }>;
+  fetchModels: () => Promise<{ id: string; name: string; vision: boolean }[] | { error: string }>;
   // AI Summarize
   summarizeContent: (data: { type: string; content: string; filePath?: string; filename?: string }) =>
     Promise<{ streamId: string } | { error: string }>;
