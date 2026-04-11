@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import Linkify from "react-linkify";
 import { TitleBar } from "./TitleBar";
+import { AISettings } from "./AISettings";
 import "./App.css";
 
 // Message types as const object
@@ -309,6 +310,7 @@ function MessageBubble({
 const initialMessages = MessageStorage.load();
 
 function App() {
+  const [showAISettings, setShowAISettings] = useState(false);
   const [connectionInfo, setConnectionInfo] = useState<{
     ips: string[];
     wsPort: number;
@@ -566,7 +568,7 @@ function App() {
 
   return (
     <>
-      <TitleBar />
+      <TitleBar onSettingsClick={() => setShowAISettings(true)} />
       <div
         className={`container ${isDragging ? "dragging" : ""}`}
         onDrop={handleDrop}
@@ -670,6 +672,9 @@ function App() {
             </button>
           </div>
         )}
+
+        {/* AI Settings Panel */}
+        <AISettings isOpen={showAISettings} onClose={() => setShowAISettings(false)} />
 
         {/* Context Menu */}
         {contextMenu && (
