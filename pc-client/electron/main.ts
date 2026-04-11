@@ -787,18 +787,16 @@ function setupIpc() {
 
       const data = await response.json();
       const models = (data.data || []).map(
-        (m: { id: string; name?: string; input_modalities?: string[]; supported_parameters?: string[] }) => ({
-          id: m.id,
-          name: m.name || m.id,
-          vision: !!(
-            (m.input_modalities && (
-              m.input_modalities.includes("image") ||
-              m.input_modalities.includes("image/png")
-            )) ||
-            (m.supported_parameters && Array.isArray(m.supported_parameters) &&
-              m.supported_parameters.some((p: string) => p.includes("vision") || p.includes("image")))
-          ),
-        })
+        (m: { id: string; name?: string; architecture?: { input_modalities?: string[]; modality?: string } }) => {
+          const inputModalities = m.architecture?.input_modalities || [];
+          const modality = m.architecture?.modality || "";
+          const hasVision = inputModalities.includes("image") || modality.includes("image");
+          return {
+            id: m.id,
+            name: m.name || m.id,
+            vision: hasVision,
+          };
+        }
       );
 
       return models;
@@ -859,12 +857,16 @@ function setupIpc() {
             const fileBuffer = fs.readFileSync(filePath);
             const pdfData = await pdfParse(fileBuffer);
             let extracted = pdfData.text || "";
+            if (!extracted.trim()) {
+              return { error: "Could not extract text from PDF — it may be a scanned/image-based PDF" };
+            }
             const MAX_BYTES = 100 * 1024;
             if (Buffer.byteLength(extracted, "utf-8") > MAX_BYTES) {
               extracted = extracted.substring(0, MAX_BYTES) + "\n\n[Content truncated, showing first 100KB]";
             }
             textContent = extracted;
-          } catch {
+          } catch (pdfErr) {
+            console.error("[Summarize] PDF parse error:", pdfErr);
             return { error: "Could not extract text from PDF" };
           }
         } else if (ext === ".docx") {
@@ -891,10 +893,9 @@ function setupIpc() {
                 (m: { id: string }) => m.id === model
               );
               if (modelObj) {
-                const modalities: string[] = modelObj.input_modalities || [];
-                const hasVision = modalities.includes("image") || modalities.includes("image/png") ||
-                  (modelObj.supported_parameters && Array.isArray(modelObj.supported_parameters) &&
-                    modelObj.supported_parameters.some((p: string) => p.includes("vision") || p.includes("image")));
+                const inputModalities: string[] = modelObj.architecture?.input_modalities || [];
+                const modality: string = modelObj.architecture?.modality || "";
+                const hasVision = inputModalities.includes("image") || modality.includes("image");
                 if (!hasVision) {
                   return { error: "model-unsupported" };
                 }

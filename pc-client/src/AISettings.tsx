@@ -9,6 +9,7 @@ interface AISettingsProps {
 interface ModelOption {
   id: string;
   name: string;
+  vision?: boolean;
 }
 
 export function AISettings({ isOpen, onClose }: AISettingsProps) {
@@ -105,12 +106,11 @@ export function AISettings({ isOpen, onClose }: AISettingsProps) {
   if (!isOpen) return null;
 
   const getDisplayName = (m: ModelOption) => {
-    // Extract short name from id: "openai/gpt-4o" -> "GPT-4o"
     const parts = m.id.split("/");
     const shortId = parts.length > 1 ? parts.slice(1).join("/") : parts[0];
-    // Capitalize first letter
     const displayName = shortId.charAt(0).toUpperCase() + shortId.slice(1);
-    return `${displayName} (${m.id})`;
+    const visionTag = m.vision ? " 👁" : "";
+    return `${displayName} (${m.id})${visionTag}`;
   };
 
   return (
