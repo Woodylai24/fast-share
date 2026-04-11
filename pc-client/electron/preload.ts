@@ -45,4 +45,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
   saveAISettings: (settings: { apiKey?: string; provider?: string; model?: string }) =>
     ipcRenderer.invoke("save-ai-settings", settings),
   fetchModels: () => ipcRenderer.invoke("fetch-models"),
+  // AI Summarize
+  summarizeContent: (data: { type: string; content: string; filePath?: string; filename?: string }) =>
+    ipcRenderer.invoke("summarize-content", data),
+  summarizeCancel: (streamId: string) => ipcRenderer.send("summarize-cancel", streamId),
+  onSummarizeChunk: (callback: (data: { streamId: string; text: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: { streamId: string; text: string }) => callback(value);
+    ipcRenderer.on("summarize-chunk", listener);
+    return () => ipcRenderer.removeListener("summarize-chunk", listener);
+  },
+  onSummarizeDone: (callback: (data: { streamId: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: { streamId: string }) => callback(value);
+    ipcRenderer.on("summarize-done", listener);
+    return () => ipcRenderer.removeListener("summarize-done", listener);
+  },
+  onSummarizeError: (callback: (data: { streamId: string; error: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: { streamId: string; error: string }) => callback(value);
+    ipcRenderer.on("summarize-error", listener);
+    return () => ipcRenderer.removeListener("summarize-error", listener);
+  },
 });
