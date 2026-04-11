@@ -12,6 +12,10 @@ import crypto from "crypto";
 import { CryptoManager, isUnencryptedType } from "./crypto";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ElectronStore = require("electron-store").default;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfParse = require("pdf-parse");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const mammoth = require("mammoth");
 
 // --- Active Summarize Streams ---
 const activeSummarizeStreams = new Map<string, AbortController>();
@@ -22,6 +26,11 @@ const SUMMARIZABLE_EXTENSIONS = new Set([
   ".cfg", ".toml", ".env", ".sh", ".bat", ".py", ".js", ".ts", ".html", ".css",
   ".sql", ".rb", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".hpp", ".tsx",
   ".jsx", ".vue", ".svelte", ".dart", ".php", ".r", ".swift", ".kt",
+  ".pdf", ".docx",
+]);
+
+const IMAGE_EXTENSIONS = new Set([
+  ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg",
 ]);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -778,9 +787,17 @@ function setupIpc() {
 
       const data = await response.json();
       const models = (data.data || []).map(
-        (m: { id: string; name?: string }) => ({
+        (m: { id: string; name?: string; input_modalities?: string[]; supported_parameters?: string[] }) => ({
           id: m.id,
           name: m.name || m.id,
+          vision: !!(
+            (m.input_modalities && (
+              m.input_modalities.includes("image") ||
+              m.input_modalities.includes("image/png")
+            )) ||
+            (m.supported_parameters && Array.isArray(m.supported_parameters) &&
+              m.supported_parameters.some((p: string) => p.includes("vision") || p.includes("image")))
+          ),
         })
       );
 
@@ -792,7 +809,7 @@ function setupIpc() {
   });
 
   // --- Summarize IPC handlers ---
-  ipcMain.handle("summarize-content", async (_event, data: { type: string; content: string; filename?: string }) => {
+  ipcMain.handle("summarize-content", async (_event, data: { type: string; content: string; filename?: string; filePath?: string }) => {
     try {
       // Decrypt API key
       const apiKeyEncrypted = aiSettingsStore.get("apiKeyEncrypted") as string;
@@ -815,34 +832,96 @@ function setupIpc() {
 
       const model = (aiSettingsStore.get("model") as string) || "openrouter/auto";
 
-      // Prepare content
-      let content: string;
+      // Prepare content — text or multimodal
+      let textContent: string | null = null;
+      let imageContent: { type: string; image_url: { url: string } } | null = null;
 
       if (data.type === "text") {
-        content = data.content;
+        textContent = data.content;
       } else {
         // File type — check extension
         const filename = data.filename || "";
         const ext = path.extname(filename).toLowerCase();
-        if (!SUMMARIZABLE_EXTENSIONS.has(ext)) {
+        const isImage = IMAGE_EXTENSIONS.has(ext);
+
+        if (!SUMMARIZABLE_EXTENSIONS.has(ext) && !isImage) {
           return { error: "unsupported-type" };
         }
 
-        // Read file from ~/FastShare/<filename>
-        const filePath = path.join(os.homedir(), "FastShare", filename);
+        // Resolve file path: prefer filePath from renderer, else ~/FastShare/<filename>
+        const filePath = data.filePath || path.join(os.homedir(), "FastShare", filename);
         if (!fs.existsSync(filePath)) {
           return { error: "File not found: " + filename };
         }
 
-        const stat = fs.statSync(filePath);
-        let fileContent = fs.readFileSync(filePath, "utf-8");
+        if (ext === ".pdf") {
+          try {
+            const fileBuffer = fs.readFileSync(filePath);
+            const pdfData = await pdfParse(fileBuffer);
+            let extracted = pdfData.text || "";
+            const MAX_BYTES = 100 * 1024;
+            if (Buffer.byteLength(extracted, "utf-8") > MAX_BYTES) {
+              extracted = extracted.substring(0, MAX_BYTES) + "\n\n[Content truncated, showing first 100KB]";
+            }
+            textContent = extracted;
+          } catch {
+            return { error: "Could not extract text from PDF" };
+          }
+        } else if (ext === ".docx") {
+          try {
+            const result = await mammoth.extractRawText({ path: filePath });
+            let extracted = result.value || "";
+            const MAX_BYTES = 100 * 1024;
+            if (Buffer.byteLength(extracted, "utf-8") > MAX_BYTES) {
+              extracted = extracted.substring(0, MAX_BYTES) + "\n\n[Content truncated, showing first 100KB]";
+            }
+            textContent = extracted;
+          } catch {
+            return { error: "Could not extract text from DOCX" };
+          }
+        } else if (isImage) {
+          // Check if model supports vision
+          try {
+            const headers: Record<string, string> = { "Content-Type": "application/json" };
+            if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+            const modelsResp = await fetch("https://openrouter.ai/api/v1/models", { headers });
+            if (modelsResp.ok) {
+              const modelsData = await modelsResp.json();
+              const modelObj = (modelsData.data || []).find(
+                (m: { id: string }) => m.id === model
+              );
+              if (modelObj) {
+                const modalities: string[] = modelObj.input_modalities || [];
+                const hasVision = modalities.includes("image") || modalities.includes("image/png") ||
+                  (modelObj.supported_parameters && Array.isArray(modelObj.supported_parameters) &&
+                    modelObj.supported_parameters.some((p: string) => p.includes("vision") || p.includes("image")));
+                if (!hasVision) {
+                  return { error: "model-unsupported" };
+                }
+              }
+              // If model not found in list, allow attempt (e.g. openrouter/auto)
+            }
+          } catch {
+            // If model list fetch fails, allow attempt
+          }
 
-        // Truncate at 100KB
-        const MAX_BYTES = 100 * 1024;
-        if (stat.size > MAX_BYTES) {
-          fileContent = fileContent.substring(0, MAX_BYTES) + "\n\n[Content truncated, showing first 100KB]";
+          const fileBuffer = fs.readFileSync(filePath);
+          const base64Data = fileBuffer.toString("base64");
+          const mimeType = getMimeType(filename);
+          imageContent = {
+            type: "image_url",
+            image_url: { url: `data:${mimeType};base64,${base64Data}` },
+          };
+        } else {
+          // Plain text file
+          const stat = fs.statSync(filePath);
+          let fileContent = fs.readFileSync(filePath, "utf-8");
+          const MAX_BYTES = 100 * 1024;
+          if (stat.size > MAX_BYTES) {
+            fileContent = fileContent.substring(0, MAX_BYTES) + "\n\n[Content truncated, showing first 100KB]";
+          }
+          textContent = fileContent;
         }
-        content = fileContent;
       }
 
       // Generate stream ID
@@ -861,7 +940,12 @@ function setupIpc() {
             },
             body: JSON.stringify({
               model,
-              messages: [{ role: "user", content: "Summarize the following content concisely:\n\n" + content }],
+              messages: [{
+                role: "user",
+                content: imageContent
+                  ? [{ type: "text", text: "Summarize the following image concisely:" }, imageContent]
+                  : "Summarize the following content concisely:\n\n" + textContent,
+              }],
               stream: true,
             }),
             signal: abortController.signal,

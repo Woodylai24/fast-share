@@ -61,6 +61,8 @@ export function SummaryPopup({ isOpen, message, onClose }: SummaryPopupProps) {
           setError("Please set up your OpenRouter API key in ⚙️ Settings");
         } else if (result.error === "unsupported-type") {
           setError("This file type is not yet supported for summarization.");
+        } else if (result.error === "model-unsupported") {
+          setError("Current model does not support image input. Please select a vision-capable model.");
         } else {
           setError(result.error);
         }
@@ -116,7 +118,11 @@ export function SummaryPopup({ isOpen, message, onClose }: SummaryPopupProps) {
 
   if (!isOpen) return null;
 
-  const subtitle = message?.filename || (message?.type === "text" ? "Clipboard Text" : "Content");
+  // Determine subtitle based on type
+  const isImage = message?.filename ? /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(message.filename) : false;
+  const subtitle = message?.filename
+    ? (isImage ? `📷 ${message.filename}` : `📄 ${message.filename}`)
+    : (message?.type === "text" ? "Clipboard Text" : "Content");
 
   return (
     <div className="summary-backdrop" onClick={onClose}>
