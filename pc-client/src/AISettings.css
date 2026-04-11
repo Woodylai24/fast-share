@@ -25,6 +25,7 @@
   flex-direction: column;
   animation: slideInRight 0.2s ease;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 @keyframes slideInRight {
@@ -104,6 +105,12 @@
   transition: border-color 0.15s;
   -webkit-appearance: none;
   appearance: none;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ai-settings-select:focus {
