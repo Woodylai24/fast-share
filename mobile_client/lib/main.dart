@@ -22,6 +22,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_linkify/flutter_linkify.dart';
 import 'package:open_filex/open_filex.dart';
 import 'firebase_options.dart';
+import 'ai_service.dart';
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
@@ -1312,7 +1313,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     // Handle encrypted messages
     if (msgType == 'encrypted') {
       if (!_keyExchangeComplete) {
-        debugPrint('[DEBUG] Received encrypted message before key exchange — dropping');
+        debugPrint(
+          '[DEBUG] Received encrypted message before key exchange — dropping',
+        );
         return;
       }
       _handleEncryptedMessage(data);
@@ -1344,7 +1347,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
       // Send our public key back to server
       final ourPublicKey = await _crypto.getPublicKeyBase64();
       _sendJson({'type': 'key-exchange', 'publicKey': ourPublicKey});
-      debugPrint('[DEBUG] Key exchange complete — encrypted channel established');
+      debugPrint(
+        '[DEBUG] Key exchange complete — encrypted channel established',
+      );
     } catch (e) {
       debugPrint('[DEBUG] Key exchange failed: $e');
     }
@@ -1511,7 +1516,13 @@ class _ConnectedScreenState extends State<ConnectedScreen>
       case 'clipboard':
         final clipboardContent = data['content'] ?? '';
         if (!_isInForeground) {
-          _showNotification("Clipboard Sync", clipboardContent.length > 50 ? clipboardContent.substring(0, 50) + '...' : clipboardContent, payload: "COPY:$clipboardContent");
+          _showNotification(
+            "Clipboard Sync",
+            clipboardContent.length > 50
+                ? clipboardContent.substring(0, 50) + '...'
+                : clipboardContent,
+            payload: "COPY:$clipboardContent",
+          );
         }
         _showClipboardDialog(clipboardContent);
         break;
@@ -1550,7 +1561,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   // --- Encrypted file transfer handling ---
 
   void _handleFileStart(Map<String, dynamic> data) {
-    debugPrint('[DEBUG] File transfer starting: ${data['filename']} (${data['fileSize']} bytes)');
+    debugPrint(
+      '[DEBUG] File transfer starting: ${data['filename']} (${data['fileSize']} bytes)',
+    );
     _incomingFile?._cleanup();
     _incomingFile = _IncomingFileTransfer(
       filename: data['filename'] as String,
@@ -1588,7 +1601,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
 
     final checksum = await CryptoService.sha256(assembled);
     if (checksum != data['checksum']) {
-      debugPrint('[DEBUG] File checksum mismatch: expected ${data['checksum']}, got $checksum');
+      debugPrint(
+        '[DEBUG] File checksum mismatch: expected ${data['checksum']}, got $checksum',
+      );
       return;
     }
 
@@ -1621,9 +1636,13 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     if (mounted && !_isDisconnected) {
       setState(() {
         if (isImage) {
-          messages.add(Message.image(filename: filename, url: fileUrl, sender: 'PC'));
+          messages.add(
+            Message.image(filename: filename, url: fileUrl, sender: 'PC'),
+          );
         } else {
-          messages.add(Message.file(filename: filename, url: fileUrl, sender: 'PC'));
+          messages.add(
+            Message.file(filename: filename, url: fileUrl, sender: 'PC'),
+          );
         }
       });
       _saveMessages();
@@ -1634,7 +1653,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
       }
     }
 
-    debugPrint('[DEBUG] File transfer complete: $filename (${transfer.receivedBytes} bytes)');
+    debugPrint(
+      '[DEBUG] File transfer complete: $filename (${transfer.receivedBytes} bytes)',
+    );
   }
 
   void _showClipboardDialog(String content) {
@@ -1763,10 +1784,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   void _sendEncrypted(Map<String, dynamic> data) async {
     try {
       final encrypted = await _crypto.encrypt(data);
-      channel.sink.add(jsonEncode({
-        'type': 'encrypted',
-        ...encrypted,
-      }));
+      channel.sink.add(jsonEncode({'type': 'encrypted', ...encrypted}));
     } catch (e) {
       debugPrint('[DEBUG] Failed to encrypt message, sending plaintext: $e');
       channel.sink.add(jsonEncode(data));
@@ -1776,7 +1794,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   /// Send a file via encrypted chunked WebSocket transfer.
   Future<void> _sendFileViaWs(String filePath, String filename) async {
     if (!_keyExchangeComplete || !_crypto.isReady) {
-      debugPrint('[DEBUG] Key exchange not complete, falling back to HTTP upload');
+      debugPrint(
+        '[DEBUG] Key exchange not complete, falling back to HTTP upload',
+      );
       await _uploadFileViaHttp(filePath, filename);
       return;
     }
@@ -1801,7 +1821,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
       int offset = 0;
       int seq = 0;
       while (offset < fileSize) {
-        final end = (offset + chunkSize > fileSize) ? fileSize : offset + chunkSize;
+        final end = (offset + chunkSize > fileSize)
+            ? fileSize
+            : offset + chunkSize;
         final chunk = fileBytes.sublist(offset, end);
         _sendEncrypted({
           'type': 'file-chunk',
@@ -1819,9 +1841,13 @@ class _ConnectedScreenState extends State<ConnectedScreen>
         'checksum': checksum,
       });
 
-      debugPrint('[DEBUG] File sent via encrypted WS: $filename ($fileSize bytes, $seq chunks)');
+      debugPrint(
+        '[DEBUG] File sent via encrypted WS: $filename ($fileSize bytes, $seq chunks)',
+      );
     } catch (e) {
-      debugPrint('[DEBUG] Failed to send file via WS, falling back to HTTP: $e');
+      debugPrint(
+        '[DEBUG] Failed to send file via WS, falling back to HTTP: $e',
+      );
       await _uploadFileViaHttp(filePath, filename);
     }
   }
@@ -1848,11 +1874,19 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   String _getMimeType(String filename) {
     final ext = filename.split('.').last.toLowerCase();
     const mimeMap = {
-      'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
-      'gif': 'image/gif', 'bmp': 'image/bmp', 'webp': 'image/webp',
-      'svg': 'image/svg+xml', 'pdf': 'application/pdf', 'zip': 'application/zip',
-      'txt': 'text/plain', 'json': 'application/json',
-      'mp4': 'video/mp4', 'mp3': 'audio/mpeg',
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'bmp': 'image/bmp',
+      'webp': 'image/webp',
+      'svg': 'image/svg+xml',
+      'pdf': 'application/pdf',
+      'zip': 'application/zip',
+      'txt': 'text/plain',
+      'json': 'application/json',
+      'mp4': 'video/mp4',
+      'mp3': 'audio/mpeg',
     };
     return mimeMap[ext] ?? 'application/octet-stream';
   }
@@ -1866,7 +1900,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
       _sendJson(data);
       if (data['type'] == 'text' && data['content'] != null) {
         setState(() {
-          messages.add(Message.text(content: data['content'] as String, sender: 'Me'));
+          messages.add(
+            Message.text(content: data['content'] as String, sender: 'Me'),
+          );
         });
         _saveMessages();
         _scrollToBottom();
@@ -1876,7 +1912,8 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     ShareHandler.registerLocalMessageCallback((fileInfo) {
       final filename = fileInfo['filename'] ?? 'Unknown';
       final url = fileInfo['url'] ?? '';
-      final isImage = filename.toLowerCase().endsWith('.jpg') ||
+      final isImage =
+          filename.toLowerCase().endsWith('.jpg') ||
           filename.toLowerCase().endsWith('.jpeg') ||
           filename.toLowerCase().endsWith('.png') ||
           filename.toLowerCase().endsWith('.gif') ||
@@ -1884,9 +1921,13 @@ class _ConnectedScreenState extends State<ConnectedScreen>
           filename.toLowerCase().endsWith('.bmp');
       setState(() {
         if (isImage) {
-          messages.add(Message.image(filename: filename, url: url, sender: 'Me'));
+          messages.add(
+            Message.image(filename: filename, url: url, sender: 'Me'),
+          );
         } else {
-          messages.add(Message.file(filename: filename, url: url, sender: 'Me'));
+          messages.add(
+            Message.file(filename: filename, url: url, sender: 'Me'),
+          );
         }
       });
       _saveMessages();
@@ -1920,7 +1961,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     Clipboard.getData(Clipboard.kTextPlain).then((data) {
       if (data?.text != null) {
         _lastClipboardText = data!.text;
-        debugPrint('[DEBUG] Saved clipboard state: ${_lastClipboardText?.substring(0, (_lastClipboardText!.length > 30 ? 30 : _lastClipboardText!.length))}...');
+        debugPrint(
+          '[DEBUG] Saved clipboard state: ${_lastClipboardText?.substring(0, (_lastClipboardText!.length > 30 ? 30 : _lastClipboardText!.length))}...',
+        );
       }
     });
   }
@@ -1929,8 +1972,11 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     Clipboard.getData(Clipboard.kTextPlain).then((data) {
       if (data?.text == null) return;
       final currentClipboard = data!.text!;
-      if (currentClipboard != _lastClipboardText && currentClipboard != _lastReceivedClipboard) {
-        debugPrint('[DEBUG] Clipboard changed while in background, sending to PC');
+      if (currentClipboard != _lastClipboardText &&
+          currentClipboard != _lastReceivedClipboard) {
+        debugPrint(
+          '[DEBUG] Clipboard changed while in background, sending to PC',
+        );
         _sendJson({'type': 'clipboard', 'content': currentClipboard});
         _lastClipboardText = currentClipboard;
       }
@@ -2083,6 +2129,16 @@ class _ConnectedScreenState extends State<ConnectedScreen>
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'AI Settings',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const AISettingsPage()),
+              );
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.file_upload),
             onPressed: _isDisconnected ? null : _pickAndSendFile,
           ),
@@ -2184,6 +2240,15 @@ class _ConnectedScreenState extends State<ConnectedScreen>
               const Divider(height: 1),
             ],
             ListTile(
+              leading: const Icon(Icons.auto_awesome),
+              title: const Text('Summarize'),
+              onTap: () {
+                Navigator.pop(context);
+                _showSummarizeSheet(message);
+              },
+            ),
+            const Divider(height: 1),
+            ListTile(
               leading: const Icon(Icons.delete, color: Colors.red),
               title: const Text('Delete', style: TextStyle(color: Colors.red)),
               onTap: () {
@@ -2194,6 +2259,14 @@ class _ConnectedScreenState extends State<ConnectedScreen>
           ],
         ),
       ),
+    );
+  }
+
+  void _showSummarizeSheet(Message message) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => SummaryBottomSheet(message: message),
     );
   }
 }
@@ -2497,46 +2570,60 @@ class MessageBubble extends StatelessWidget {
         constraints: const BoxConstraints(maxWidth: 200, maxHeight: 200),
         child: url != null
             ? isLocalFile
-                ? Image.file(
-                    File(url.replaceFirst('file://', '')),
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) => Container(
-                      color: Colors.grey[200],
-                      child: const Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.broken_image, size: 40, color: Colors.grey),
-                          SizedBox(height: 4),
-                          Text(
-                            'Failed to load',
-                            style: TextStyle(fontSize: 10, color: Colors.grey),
-                          ),
-                        ],
+                  ? Image.file(
+                      File(url.replaceFirst('file://', '')),
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Container(
+                        color: Colors.grey[200],
+                        child: const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.broken_image,
+                              size: 40,
+                              color: Colors.grey,
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              'Failed to load',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  )
-                : CachedNetworkImage(
-                    imageUrl: url,
-                    fit: BoxFit.cover,
-                    placeholder: (context, url) => Container(
-                      color: Colors.grey[200],
-                      child: const Center(child: CircularProgressIndicator()),
-                    ),
-                    errorWidget: (context, url, error) => Container(
-                      color: Colors.grey[200],
-                      child: const Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.broken_image, size: 40, color: Colors.grey),
-                          SizedBox(height: 4),
-                          Text(
-                            'Failed to load',
-                            style: TextStyle(fontSize: 10, color: Colors.grey),
-                          ),
-                        ],
+                    )
+                  : CachedNetworkImage(
+                      imageUrl: url,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) => Container(
+                        color: Colors.grey[200],
+                        child: const Center(child: CircularProgressIndicator()),
                       ),
-                    ),
-                  )
+                      errorWidget: (context, url, error) => Container(
+                        color: Colors.grey[200],
+                        child: const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.broken_image,
+                              size: 40,
+                              color: Colors.grey,
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              'Failed to load',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
             : Container(
                 color: Colors.grey[200],
                 child: const Icon(Icons.image, size: 40, color: Colors.grey),
@@ -2606,5 +2693,456 @@ class MessageBubble extends StatelessWidget {
 extension DateTimeExtension on DateTime {
   String toDateString() {
     return '$year-$month-$day';
+  }
+}
+
+class AISettingsPage extends StatefulWidget {
+  const AISettingsPage({super.key});
+
+  @override
+  State<AISettingsPage> createState() => _AISettingsPageState();
+}
+
+class _AISettingsPageState extends State<AISettingsPage> {
+  final TextEditingController _apiKeyController = TextEditingController();
+  bool _showApiKey = false;
+  bool _apiKeySaved = false;
+  bool _hasApiKey = false;
+  String _selectedModel = 'openrouter/auto';
+  List<AIModel> _models = [];
+  bool _loadingModels = false;
+  String? _fetchError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final apiKey = await AISettingsService.getApiKey();
+    final model = await AISettingsService.getModel();
+
+    setState(() {
+      if (apiKey != null && apiKey.isNotEmpty) {
+        _hasApiKey = true;
+        _apiKeyController.text = '••••••••';
+        _fetchModels();
+      }
+      _selectedModel = model;
+    });
+  }
+
+  Future<void> _saveApiKey() async {
+    final keyToSave = _apiKeyController.text;
+    if (keyToSave.isEmpty || keyToSave == '••••••••') return;
+
+    await AISettingsService.saveApiKey(keyToSave);
+    AIService.clearModelCache();
+    setState(() {
+      _hasApiKey = true;
+      _apiKeyController.text = '••••••••';
+      _apiKeySaved = true;
+    });
+    _fetchModels();
+
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        setState(() => _apiKeySaved = false);
+      }
+    });
+  }
+
+  Future<void> _fetchModels() async {
+    final apiKey = await AISettingsService.getApiKey();
+    if (apiKey == null || apiKey.isEmpty) return;
+
+    setState(() {
+      _loadingModels = true;
+      _fetchError = null;
+    });
+
+    try {
+      final models = await AIService.fetchModels(apiKey);
+      setState(() {
+        _models = models;
+        _loadingModels = false;
+      });
+    } catch (e) {
+      setState(() {
+        _fetchError = 'Failed to fetch models';
+        _loadingModels = false;
+      });
+    }
+  }
+
+  Future<void> _saveModel(String model) async {
+    await AISettingsService.saveModel(model);
+    setState(() => _selectedModel = model);
+  }
+
+  @override
+  void dispose() {
+    _apiKeyController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('AI Settings'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _hasApiKey ? _fetchModels : null,
+            tooltip: 'Refresh models',
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Provider',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: 'openrouter',
+              items: const [
+                DropdownMenuItem(
+                  value: 'openrouter',
+                  child: Text('OpenRouter'),
+                ),
+              ],
+              onChanged: null,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'Select provider',
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'API Key',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _apiKeyController,
+                    obscureText: !_showApiKey,
+                    decoration: InputDecoration(
+                      border: const OutlineInputBorder(),
+                      hintText: 'sk-or-...',
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _showApiKey ? Icons.visibility_off : Icons.visibility,
+                        ),
+                        onPressed: () =>
+                            setState(() => _showApiKey = !_showApiKey),
+                      ),
+                    ),
+                    onChanged: (_) => setState(() => _apiKeySaved = false),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed:
+                      (_apiKeyController.text.isNotEmpty &&
+                          _apiKeyController.text != '••••••••')
+                      ? _saveApiKey
+                      : null,
+                  child: const Text('Save'),
+                ),
+              ],
+            ),
+            if (_apiKeySaved)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text('✓ Saved', style: TextStyle(color: Colors.green)),
+              ),
+            const SizedBox(height: 24),
+            const Text(
+              'Default Model',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: _hasApiKey ? _selectedModel : null,
+              items: [
+                if (!_hasApiKey)
+                  const DropdownMenuItem(
+                    value: '',
+                    child: Text('Enter API key first'),
+                  ),
+                if (_hasApiKey && _models.isEmpty && !_loadingModels)
+                  const DropdownMenuItem(
+                    value: 'openrouter/auto',
+                    child: Text('Auto (openrouter/auto)'),
+                  ),
+                ..._models.map(
+                  (m) => DropdownMenuItem(
+                    value: m.id,
+                    child: Text(m.displayName, overflow: TextOverflow.ellipsis),
+                  ),
+                ),
+              ],
+              onChanged: _hasApiKey && !_loadingModels
+                  ? (value) {
+                      if (value != null) _saveModel(value);
+                    }
+                  : null,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'Select model',
+              ),
+            ),
+            if (_loadingModels)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 8),
+                    Text('Loading models...'),
+                  ],
+                ),
+              ),
+            if (_fetchError != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  _fetchError!,
+                  style: const TextStyle(color: Colors.red),
+                ),
+              ),
+            const SizedBox(height: 24),
+            const Divider(),
+            const SizedBox(height: 8),
+            const Text(
+              'API key is stored securely on your device.',
+              style: TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class SummaryBottomSheet extends StatefulWidget {
+  final Message message;
+
+  const SummaryBottomSheet({super.key, required this.message});
+
+  @override
+  State<SummaryBottomSheet> createState() => _SummaryBottomSheetState();
+}
+
+class _SummaryBottomSheetState extends State<SummaryBottomSheet> {
+  String _text = '';
+  bool _isStreaming = false;
+  String? _error;
+  String _model = '';
+  String? _streamId;
+  StreamSubscription<String>? _chunkSub;
+  StreamSubscription<String>? _errorSub;
+  StreamSubscription<void>? _doneSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadModel();
+    _startSummarize();
+  }
+
+  Future<void> _loadModel() async {
+    final model = await AISettingsService.getModel();
+    setState(() => _model = model);
+  }
+
+  Future<void> _startSummarize() async {
+    final hasApiKey = await AISettingsService.hasApiKey();
+    if (!hasApiKey) {
+      setState(() {
+        _error = 'Please set up your OpenRouter API key in AI Settings';
+        _isStreaming = false;
+      });
+      return;
+    }
+
+    String? filePath;
+    if (widget.message.url != null) {
+      if (widget.message.url!.startsWith('file://')) {
+        filePath = widget.message.url!.replaceFirst('file://', '');
+      } else {
+        final appDir = await getApplicationDocumentsDirectory();
+        final fastShareDir = Directory('${appDir.path}/FastShare');
+        filePath = '${fastShareDir.path}/${widget.message.filename ?? 'file'}';
+        if (!await File(filePath).exists()) {
+          filePath = null;
+        }
+      }
+    }
+
+    setState(() => _isStreaming = true);
+
+    final result = await AISummarizeService.summarize(
+      type: widget.message.type.name,
+      content: widget.message.content,
+      filename: widget.message.filename,
+      filePath: filePath,
+    );
+
+    if (result.error != null) {
+      String errorMsg = result.error!;
+      if (result.error == 'no-api-key') {
+        errorMsg = 'Please set up your OpenRouter API key in AI Settings';
+      } else if (result.error == 'unsupported-type') {
+        errorMsg = 'This file type is not yet supported for summarization.';
+      } else if (result.error == 'model-unsupported') {
+        errorMsg =
+            'Current model does not support image input. Please select a vision-capable model.';
+      }
+      setState(() {
+        _error = errorMsg;
+        _isStreaming = false;
+      });
+      return;
+    }
+
+    _streamId = result.streamId;
+    _setupListeners();
+  }
+
+  void _setupListeners() {
+    if (_streamId == null) return;
+
+    _chunkSub = AISummarizeService.getChunkStream(_streamId!).listen((chunk) {
+      setState(() => _text += chunk);
+    });
+
+    _errorSub = AISummarizeService.getErrorStream(_streamId!).listen((error) {
+      setState(() {
+        _error = error;
+        _isStreaming = false;
+      });
+    });
+
+    _doneSub = AISummarizeService.getDoneStream(_streamId!).listen((_) {
+      setState(() => _isStreaming = false);
+    });
+  }
+
+  void _cancelStream() {
+    if (_streamId != null) {
+      AISummarizeService.cancelStream(_streamId!);
+    }
+    setState(() => _isStreaming = false);
+  }
+
+  @override
+  void dispose() {
+    _chunkSub?.cancel();
+    _errorSub?.cancel();
+    _doneSub?.cancel();
+    if (_streamId != null) {
+      AISummarizeService.cancelStream(_streamId!);
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isImage =
+        widget.message.filename != null &&
+        RegExp(
+          r'\.(jpg|jpeg|png|gif|webp|bmp|svg)$',
+          caseSensitive: false,
+        ).hasMatch(widget.message.filename!);
+    final subtitle = widget.message.filename != null
+        ? '${isImage ? '📷' : '📄'} ${widget.message.filename}'
+        : (widget.message.type == MessageType.text
+              ? 'Clipboard Text'
+              : 'Content');
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.7,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '🤖 AI Summary',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  if (_model.isNotEmpty)
+                    Text(
+                      'Using: $_model',
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                ],
+              ),
+              IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () {
+                  _cancelStream();
+                  Navigator.pop(context);
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(subtitle, style: const TextStyle(color: Colors.grey)),
+          const SizedBox(height: 16),
+          Expanded(child: SingleChildScrollView(child: _buildContent())),
+          if (_isStreaming)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Center(
+                child: TextButton(
+                  onPressed: _cancelStream,
+                  child: const Text('Cancel'),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContent() {
+    if (_error != null) {
+      return Text('⚠️ $_error', style: const TextStyle(color: Colors.orange));
+    }
+    if (_text.isEmpty && _isStreaming) {
+      return const Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 8),
+          Text('Analyzing...'),
+        ],
+      );
+    }
+    return SelectableText(_text, style: const TextStyle(fontSize: 14));
   }
 }
