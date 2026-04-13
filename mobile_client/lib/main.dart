@@ -3136,6 +3136,7 @@ class _SummaryBottomSheetState extends State<SummaryBottomSheet> {
     if (_text.isEmpty && _isStreaming) {
       return const Column(
         mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           CircularProgressIndicator(),
           SizedBox(height: 8),
