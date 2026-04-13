@@ -3134,14 +3134,15 @@ class _SummaryBottomSheetState extends State<SummaryBottomSheet> {
       return Text('⚠️ $_error', style: const TextStyle(color: Colors.orange));
     }
     if (_text.isEmpty && _isStreaming) {
-      return const Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          CircularProgressIndicator(),
-          SizedBox(height: 8),
-          Text('Analyzing...'),
-        ],
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 8),
+            Text('Analyzing...'),
+          ],
+        ),
       );
     }
     return SelectableText(_text, style: const TextStyle(fontSize: 14));
