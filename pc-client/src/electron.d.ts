@@ -32,6 +32,17 @@ export interface IElectronAPI {
     callback: (file: { filename: string; path: string }) => void,
   ) => () => void;
   getPathForFile: (file: File) => string;
+  // AI Settings
+  getAISettings: () => Promise<{ apiKey: string | null; provider: string; model: string }>;
+  saveAISettings: (settings: { apiKey?: string; provider?: string; model?: string }) => Promise<{ success: boolean }>;
+  fetchModels: () => Promise<{ id: string; name: string; vision: boolean }[] | { error: string }>;
+  // AI Summarize
+  summarizeContent: (data: { type: string; content: string; filePath?: string; filename?: string }) =>
+    Promise<{ streamId: string } | { error: string }>;
+  summarizeCancel: (streamId: string) => void;
+  onSummarizeChunk: (callback: (data: { streamId: string; text: string }) => void) => () => void;
+  onSummarizeDone: (callback: (data: { streamId: string }) => void) => () => void;
+  onSummarizeError: (callback: (data: { streamId: string; error: string }) => void) => () => void;
 }
 
 declare global {
