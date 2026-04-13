@@ -52,7 +52,7 @@ class AIModel {
     final parts = id.split('/');
     final shortId = parts.length > 1 ? parts.sublist(1).join('/') : parts[0];
     final display = shortId[0].toUpperCase() + shortId.substring(1);
-    return '$display ($id)${hasVision ? ' 👁' : ''}';
+    return '$display${hasVision ? ' 👁' : ''}';
   }
 }
 
@@ -362,9 +362,9 @@ class AISummarizeService {
       final request = await client.postUrl(
         Uri.parse('https://openrouter.ai/api/v1/chat/completions'),
       );
-      request.headers.set('Content-Type', 'application/json');
+      request.headers.set('Content-Type', 'application/json; charset=utf-8');
       request.headers.set('Authorization', 'Bearer $apiKey');
-      request.write(body);
+      request.add(utf8.encode(body));
 
       final response = await request.close();
 
