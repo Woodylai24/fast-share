@@ -38,7 +38,7 @@ Grab the latest `Fast-Share-Setup-1.0.0.exe` from [Releases](https://github.com/
 ### Install from Source
 
 ```bash
-cd pc-client
+cd pc_client
 npm install
 npm run dev
 ```
@@ -49,7 +49,7 @@ npm run dev
 npm run dist
 ```
 
-Output: `pc-client/release/Fast-Share-Setup-1.0.0.exe`
+Output: `pc_client/release/Fast-Share-Setup-1.0.0.exe`
 
 ---
 
