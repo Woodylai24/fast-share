@@ -6,6 +6,7 @@ import 'package:fast_share_mobile/models/message.dart';
 /// Message storage service for persistence
 class MessageStorageService {
   static const String _messagesKey = 'saved_messages';
+  // ignore: unused_field
   static const int _maxMessages = 100;
 
   static Future<void> saveMessages(List<Message> messages) async {
