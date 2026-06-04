@@ -282,6 +282,14 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                 <option value="auto-message">Auto send as message</option>
                 <option value="auto-sync">Auto sync</option>
               </select>
+              <span className="settings-description">
+                {clipboardSync === "none" &&
+                  "Clipboard changes on this device will not be shared."}
+                {clipboardSync === "auto-message" &&
+                  "Clipboard changes will be sent as regular text messages."}
+                {clipboardSync === "auto-sync" &&
+                  "Clipboard changes will be sent to the other device and auto-copied."}
+              </span>
             </div>
           </section>
 
