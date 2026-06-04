@@ -7,6 +7,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'firebase_options.dart';
 import 'package:fast_share_mobile/services/notifications.dart';
+import 'package:fast_share_mobile/services/theme_notifier.dart';
+import 'package:fast_share_mobile/theme/app_theme.dart';
 import 'package:fast_share_mobile/screens/home_screen.dart';
 
 Future<void> main() async {
@@ -88,18 +90,32 @@ Future<void> main() async {
     // The app will automatically reconnect via lifecycle observer
   });
 
-  runApp(const FastShareApp());
+  // Create and initialize theme notifier
+  final ThemeNotifier themeNotifier = ThemeNotifier();
+  await themeNotifier.init();
+
+  runApp(FastShareApp(themeNotifier: themeNotifier));
 }
 
 class FastShareApp extends StatelessWidget {
-  const FastShareApp({super.key});
+  final ThemeNotifier themeNotifier;
+
+  const FastShareApp({super.key, required this.themeNotifier});
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Fast Share Mobile',
-      theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
-      home: const HomeScreen(),
+    return ListenableBuilder(
+      listenable: themeNotifier,
+      builder: (context, child) {
+        return MaterialApp(
+          title: 'Fast Share Mobile',
+          theme: AppTheme.light,
+          darkTheme: AppTheme.dark,
+          themeMode: themeNotifier.mode,
+          home: child,
+        );
+      },
+      child: HomeScreen(themeNotifier: themeNotifier),
     );
   }
 }

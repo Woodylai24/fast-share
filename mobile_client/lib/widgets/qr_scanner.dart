@@ -2,9 +2,12 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:fast_share_mobile/screens/connecting_screen.dart';
+import 'package:fast_share_mobile/services/theme_notifier.dart';
 
 class ScannerScreen extends StatefulWidget {
-  const ScannerScreen({super.key});
+  final ThemeNotifier themeNotifier;
+
+  const ScannerScreen({super.key, required this.themeNotifier});
 
   @override
   State<ScannerScreen> createState() => _ScannerScreenState();
@@ -36,6 +39,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                         ip: data['ip'],
                         port: data['port'],
                         httpPort: data['httpPort'] ?? 8081,
+                        themeNotifier: widget.themeNotifier,
                       ),
                     ),
                   );

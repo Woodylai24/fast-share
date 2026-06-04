@@ -13,8 +13,8 @@
 }
 
 .summary-modal {
-  background: #1e1e1e;
-  border: 1px solid #333;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-secondary);
   border-radius: 12px;
   width: 480px;
   max-height: 400px;
@@ -39,18 +39,18 @@
 .summary-title-section h3 {
   margin: 0;
   font-size: 1rem;
-  color: #fff;
+  color: var(--text-sent);
 }
 
 .summary-model {
   font-size: 0.7rem;
-  color: #888;
+  color: var(--text-muted);
 }
 
 .summary-close {
   background: none;
   border: none;
-  color: #888;
+  color: var(--text-muted);
   font-size: 1.1rem;
   cursor: pointer;
   padding: 0.2rem 0.4rem;
@@ -59,15 +59,15 @@
 }
 
 .summary-close:hover {
-  background: #333;
-  color: #fff;
+  background: var(--bg-received);
+  color: var(--text-sent);
 }
 
 .summary-subtitle {
   padding: 0 1.25rem 0.5rem;
   font-size: 0.75rem;
   color: #aaa;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--border-secondary);
   padding-bottom: 0.75rem;
   white-space: nowrap;
   overflow: hidden;
@@ -82,7 +82,7 @@
   max-height: 240px;
   font-size: 0.88rem;
   line-height: 1.55;
-  color: #ddd;
+  color: var(--content-text);
 }
 
 .summary-content::-webkit-scrollbar {
@@ -90,7 +90,7 @@
 }
 
 .summary-content::-webkit-scrollbar-thumb {
-  background: #444;
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 
@@ -102,7 +102,7 @@
 .summary-text.streaming::after {
   content: "▊";
   animation: blink-cursor 0.8s step-end infinite;
-  color: #007bff;
+  color: var(--accent);
 }
 
 @keyframes blink-cursor {
@@ -111,11 +111,11 @@
 }
 
 .summary-error {
-  color: #e8a74e;
+  color: var(--warning);
 }
 
 .summary-loading {
-  color: #888;
+  color: var(--text-muted);
 }
 
 .loading-dots::after {
@@ -137,9 +137,9 @@
 }
 
 .summary-cancel-btn {
-  background: #333;
+  background: var(--bg-received);
   color: #ccc;
-  border: 1px solid #444;
+  border: 1px solid var(--border-primary);
   padding: 0.4rem 1rem;
   border-radius: 6px;
   font-size: 0.8rem;
@@ -148,5 +148,5 @@
 }
 
 .summary-cancel-btn:hover {
-  background: #444;
+  background: var(--border-primary);
 }

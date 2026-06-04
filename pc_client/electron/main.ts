@@ -3,6 +3,8 @@ import path from "path";
 import { startServers } from "./server";
 import { registerIpcHandlers } from "./ipc-handlers";
 import { registerAIHandlers } from "./ai-summarize";
+import { createTray, shouldMinimizeToTray } from "./tray";
+import settingsStore from "./settings-store";
 
 // Enable remote debugging for VS Code to attach to Renderer
 app.commandLine.appendSwitch("remote-debugging-port", "9222");
@@ -35,14 +37,33 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
   }
+
+  mainWindow.on("close", (event) => {
+    if (shouldMinimizeToTray()) {
+      event.preventDefault();
+      mainWindow!.hide();
+    }
+  });
 }
 
 app.whenReady().then(() => {
   const { ipcMain } = require("electron");
-  registerIpcHandlers(ipcMain, getMainWindow);
-  registerAIHandlers(ipcMain, getMainWindow);
   startServers({ getMainWindow });
+
+  const { restartClipboardSync } = require("./clipboard-sync") as typeof import("./clipboard-sync");
+  const { sendEncryptedToClients } = require("./server") as typeof import("./server");
+  registerIpcHandlers(ipcMain, getMainWindow, {
+    onClipboardSettingChanged: () => {
+      restartClipboardSync((message: object) => sendEncryptedToClients(message));
+    },
+  });
+  registerAIHandlers(ipcMain, getMainWindow);
   createWindow();
+  createTray(getMainWindow);
+
+  // Startup on boot
+  const startupOnBoot = settingsStore.get("startupOnBoot", false) as boolean;
+  app.setLoginItemSettings({ openAtLogin: startupOnBoot });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
