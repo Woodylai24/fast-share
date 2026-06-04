@@ -39,7 +39,7 @@
 }
 
 .qr-section {
-  background: white;
+  background: var(--bg-primary);
   padding: 1.5rem;
   border-radius: 12px;
   margin-bottom: 1rem;
@@ -53,7 +53,7 @@
 
 .mono {
   font-family: monospace;
-  background: #eee;
+  background: var(--bg-received);
   padding: 0.2rem 0.5rem;
   border-radius: 4px;
 }
@@ -103,7 +103,7 @@
 }
 
 .clear-history-btn:hover {
-  background: #666;
+  background: var(--border-primary);
 }
 
 .message-list {
@@ -265,7 +265,7 @@
 /* Context menu */
 .context-menu {
   position: fixed;
-  background: #2a2a2a;
+  background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
@@ -280,7 +280,7 @@
   padding: 0.6rem 1rem;
   background: none;
   border: none;
-  color: var(--text-sent);
+  color: var(--text-primary);
   text-align: left;
   cursor: pointer;
   font-size: 0.85rem;
@@ -288,7 +288,7 @@
 }
 
 .context-menu-item:hover {
-  background: #3a3a3a;
+  background: var(--bg-hover);
 }
 
 .context-menu-item.delete {
@@ -300,7 +300,7 @@
 }
 
 .context-menu-item:disabled {
-  color: #666;
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 
@@ -319,9 +319,9 @@ input[type="text"] {
   flex: 1;
   padding: 0.6rem;
   border-radius: 4px;
-  border: 1px solid #555;
+  border: 1px solid var(--border-primary);
   background: var(--bg-input);
-  color: var(--text-sent);
+  color: var(--text-primary);
 }
 
 input[type="text"]:focus {
@@ -344,7 +344,7 @@ button:hover {
 }
 
 button:disabled {
-  background: #555;
+  background: var(--border-primary);
   cursor: not-allowed;
 }
 
@@ -363,7 +363,7 @@ button:disabled {
 }
 
 .message-list::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: var(--border-primary);
 }
 
 /* Image error fallback */

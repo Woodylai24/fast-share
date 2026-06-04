@@ -51,7 +51,7 @@
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  color: var(--text-sent);
+  color: var(--text-primary);
 }
 
 .settings-close {
@@ -238,7 +238,7 @@
   border-radius: 6px;
   border: 1px solid var(--border-primary);
   background: var(--bg-input);
-  color: var(--text-sent);
+  color: var(--text-primary);
   font-size: 13px;
   cursor: pointer;
   outline: none;
@@ -269,7 +269,7 @@
   border-radius: 6px;
   border: 1px solid var(--border-primary);
   background: var(--bg-input);
-  color: var(--text-sent);
+  color: var(--text-primary);
   font-size: 13px;
   outline: none;
   transition: border-color 0.15s;

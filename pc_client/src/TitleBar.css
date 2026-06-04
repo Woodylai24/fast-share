@@ -25,7 +25,7 @@
 .title-bar-title {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-sent);
+  color: var(--text-primary);
   opacity: 0.9;
 }
 
@@ -44,7 +44,7 @@
   height: 32px;
   border: none;
   background: transparent;
-  color: var(--text-sent);
+  color: var(--text-primary);
   cursor: pointer;
   display: flex;
   align-items: center;
