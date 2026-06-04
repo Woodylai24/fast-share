@@ -1,0 +1,846 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter/services.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:fast_share_mobile/models/message.dart';
+import 'package:fast_share_mobile/services/message_storage.dart';
+import 'package:fast_share_mobile/services/notifications.dart';
+import 'package:fast_share_mobile/crypto_service.dart';
+import 'package:fast_share_mobile/share_handler.dart';
+
+/// Incoming file transfer state for reassembly
+class _IncomingFileTransfer {
+  final String filename;
+  final int fileSize;
+  final String mimeType;
+  final List<Uint8List> chunks = [];
+  int receivedBytes = 0;
+  Timer? _timer;
+
+  _IncomingFileTransfer({
+    required this.filename,
+    required this.fileSize,
+    required this.mimeType,
+  }) {
+    _resetTimer();
+  }
+
+  void _resetTimer() {
+    _timer?.cancel();
+    _timer = Timer(const Duration(seconds: 30), () {
+      debugPrint('[DEBUG] File chunk reassembly timeout for $filename');
+    });
+  }
+
+  void _cancelTimer() {
+    _timer?.cancel();
+  }
+
+  void _cleanup() {
+    _cancelTimer();
+    chunks.clear();
+  }
+}
+
+/// Manages WebSocket connection, E2EE, messages, file transfer, and clipboard sync.
+/// Used by ConnectedScreen via ListenableBuilder.
+class ChatNotifier extends ChangeNotifier {
+  final String ip;
+  final int port;
+  final int httpPort;
+
+  // WebSocket
+  late WebSocketChannel channel;
+  StreamSubscription? _subscription;
+
+  // Messages
+  final List<Message> _messages = [];
+  List<Message> get messages => List.unmodifiable(_messages);
+
+  // Connection state
+  bool _isDisconnected = false;
+  bool get isDisconnected => _isDisconnected;
+
+  bool _isReconnecting = false;
+  bool get isReconnecting => _isReconnecting;
+
+  bool _isInForeground = true;
+  bool get isInForeground => _isInForeground;
+
+  // Clipboard
+  String? _lastClipboardText;
+  String? _lastReceivedClipboard;
+  Timer? _clipboardPollTimer;
+
+  // Device ID
+  static String? _deviceId;
+
+  // Intentional disconnect flag
+  bool _intentionalDisconnect = false;
+
+  // E2EE
+  final CryptoService _crypto = CryptoService();
+  bool _keyExchangeComplete = false;
+  bool get keyExchangeComplete => _keyExchangeComplete;
+  Timer? _keyExchangeTimeout;
+
+  // File transfer
+  _IncomingFileTransfer? _incomingFile;
+
+  // Scroll control (exposed for the widget to use)
+  final ScrollController scrollController = ScrollController();
+
+  ChatNotifier({
+    required this.ip,
+    required this.port,
+    required this.httpPort,
+  });
+
+  /// Initialize everything — call from initState.
+  void init() {
+    _initDeviceId();
+    _loadSavedMessages();
+    _connect();
+    _startClipboardPolling();
+  }
+
+  // ─── Device ID ───────────────────────────────────────────────────────
+
+  Future<void> _initDeviceId() async {
+    final prefs = await SharedPreferences.getInstance();
+    _deviceId = prefs.getString('device_id');
+    if (_deviceId == null) {
+      _deviceId = 'device_${DateTime.now().millisecondsSinceEpoch}';
+      await prefs.setString('device_id', _deviceId!);
+    }
+    debugPrint('[DEBUG] Device ID: $_deviceId');
+  }
+
+  // ─── Message persistence ─────────────────────────────────────────────
+
+  Future<void> _loadSavedMessages() async {
+    final savedMessages = await MessageStorageService.loadMessages();
+    if (savedMessages.isNotEmpty) {
+      _messages.addAll(savedMessages);
+      notifyListeners();
+      _scrollToBottom();
+    }
+  }
+
+  Future<void> _saveMessages() async {
+    await MessageStorageService.saveMessages(_messages);
+  }
+
+  void _scrollToBottom() {
+    if (scrollController.hasClients) {
+      scrollController.animateTo(
+        scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  // ─── Connection ──────────────────────────────────────────────────────
+
+  Future<void> _connect() async {
+    final wsUrl = Uri.parse('ws://$ip:$port');
+    debugPrint('[DEBUG] ChatNotifier: Connecting to $wsUrl');
+
+    await _crypto.init();
+    _keyExchangeComplete = false;
+    debugPrint('[DEBUG] CryptoService initialized with new ephemeral key pair');
+
+    channel = WebSocketChannel.connect(wsUrl);
+
+    _subscription = channel.stream.listen(
+      (message) {
+        debugPrint('[DEBUG] Received message: $message');
+        try {
+          final data = jsonDecode(message);
+          debugPrint('[DEBUG] Parsed message type: ${data['type']}');
+          _handleRawMessage(data);
+        } catch (e) {
+          debugPrint('[DEBUG] Failed to parse message: $e');
+          if (!_isDisconnected) {
+            _messages.add(
+              Message.text(content: message.toString(), sender: 'PC'),
+            );
+            notifyListeners();
+            _saveMessages();
+            _scrollToBottom();
+          }
+        }
+      },
+      onError: (error) {
+        debugPrint('[DEBUG] WebSocket ERROR: $error');
+        if (!_isDisconnected && !_intentionalDisconnect) {
+          debugPrint(
+            '[DEBUG] Connection error, will attempt reconnect on resume',
+          );
+        }
+      },
+      onDone: () {
+        debugPrint('[DEBUG] WebSocket connection CLOSED');
+        if (!_isDisconnected && !_intentionalDisconnect) {
+          debugPrint(
+            '[DEBUG] Connection closed unexpectedly, will attempt reconnect on resume',
+          );
+        }
+      },
+    );
+
+    // Send handshake with device ID and FCM token
+    final prefs = await SharedPreferences.getInstance();
+    final fcmToken = prefs.getString('fcm_token');
+    _sendJson({
+      'type': 'handshake',
+      'device': 'Mobile',
+      'deviceId': _deviceId,
+      'fcmToken': fcmToken,
+    });
+    debugPrint(
+      '[DEBUG] ChatNotifier: Handshake sent with deviceId: $_deviceId, fcmToken: $fcmToken',
+    );
+  }
+
+  bool _isConnected() {
+    try {
+      return !_isDisconnected && channel.closeCode == null;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Future<void> attemptReconnect() async {
+    if (_isReconnecting || _intentionalDisconnect) return;
+
+    _isReconnecting = true;
+    notifyListeners();
+    debugPrint('[DEBUG] Attempting to reconnect...');
+
+    try {
+      await _subscription?.cancel();
+
+      await _crypto.init();
+      _keyExchangeComplete = false;
+
+      final wsUrl = Uri.parse('ws://$ip:$port');
+      channel = WebSocketChannel.connect(wsUrl);
+
+      _subscription = channel.stream.listen(
+        (message) {
+          debugPrint('[DEBUG] Received message on reconnect: $message');
+          try {
+            final data = jsonDecode(message);
+            _handleRawMessage(data);
+          } catch (e) {
+            debugPrint('[DEBUG] Failed to parse message: $e');
+            if (!_isDisconnected) {
+              _messages.add(
+                Message.text(content: message.toString(), sender: 'PC'),
+              );
+              notifyListeners();
+              _saveMessages();
+              _scrollToBottom();
+            }
+          }
+        },
+        onError: (error) {
+          debugPrint('[DEBUG] Reconnect WebSocket ERROR: $error');
+          if (!_intentionalDisconnect) {
+            handleDisconnect('Connection error: $error');
+          }
+        },
+        onDone: () {
+          debugPrint('[DEBUG] Reconnect WebSocket CLOSED');
+          if (!_intentionalDisconnect) {
+            handleDisconnect('Connection closed');
+          }
+        },
+      );
+
+      _sendJson({'type': 'reconnect', 'deviceId': _deviceId});
+      debugPrint('[DEBUG] Reconnect message sent');
+
+      _isDisconnected = false;
+      _isReconnecting = false;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[DEBUG] Reconnect failed: $e');
+      _isReconnecting = false;
+      notifyListeners();
+      handleDisconnect('Reconnection failed');
+    }
+  }
+
+  // ─── Lifecycle ───────────────────────────────────────────────────────
+
+  void handleAppLifecycleChange(bool isInForeground) {
+    _isInForeground = isInForeground;
+    notifyListeners();
+
+    if (isInForeground) {
+      if (!_intentionalDisconnect && !_isConnected()) {
+        debugPrint('[DEBUG] App resumed, attempting reconnect...');
+        attemptReconnect();
+      }
+      checkAndSendClipboard();
+    } else {
+      saveCurrentClipboard();
+    }
+  }
+
+  // ─── Message handling (raw) ──────────────────────────────────────────
+
+  void _handleRawMessage(Map<String, dynamic> data) {
+    final String msgType = data['type'] ?? '';
+
+    if (msgType == 'key-exchange') {
+      debugPrint('[DEBUG] Received key-exchange from server');
+      _handleKeyExchange(data['publicKey'] as String);
+      return;
+    }
+
+    if (msgType == 'handshake') {
+      debugPrint('[DEBUG] Received handshake from server');
+      return;
+    }
+
+    if (msgType == 'encrypted') {
+      if (!_keyExchangeComplete) {
+        debugPrint(
+          '[DEBUG] Received encrypted message before key exchange — dropping',
+        );
+        return;
+      }
+      _handleEncryptedMessage(data);
+      return;
+    }
+
+    if (msgType == 'disconnect') {
+      final reason = data['reason'] ?? 'PC disconnected';
+      debugPrint('[DEBUG] Received disconnect message: $reason');
+      _intentionalDisconnect = true;
+      if (!_isDisconnected) {
+        handleDisconnect(reason);
+      }
+      return;
+    }
+
+    _handleIncomingMessage(data);
+  }
+
+  // ─── E2EE ────────────────────────────────────────────────────────────
+
+  Future<void> _handleKeyExchange(String serverPublicKey) async {
+    try {
+      await _crypto.computeSharedSecret(serverPublicKey);
+      _keyExchangeComplete = true;
+      _keyExchangeTimeout?.cancel();
+
+      final ourPublicKey = await _crypto.getPublicKeyBase64();
+      _sendJson({'type': 'key-exchange', 'publicKey': ourPublicKey});
+      debugPrint(
+        '[DEBUG] Key exchange complete — encrypted channel established',
+      );
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[DEBUG] Key exchange failed: $e');
+    }
+  }
+
+  Future<void> _handleEncryptedMessage(Map<String, dynamic> wrapper) async {
+    final decrypted = await _crypto.decrypt({
+      'nonce': wrapper['nonce'] as String,
+      'payload': wrapper['payload'] as String,
+      'tag': wrapper['tag'] as String,
+    });
+
+    if (decrypted == null) {
+      debugPrint('[DEBUG] Decryption failed — dropping message');
+      return;
+    }
+
+    debugPrint('[DEBUG] Decrypted inner message type: ${decrypted['type']}');
+    _handleIncomingMessage(decrypted);
+  }
+
+  // ─── Incoming message dispatch ───────────────────────────────────────
+
+  void _handleIncomingMessage(Map<String, dynamic> data) {
+    final String msgType = data['type'] ?? 'text';
+
+    if (_isDisconnected) return;
+
+    switch (msgType) {
+      case 'text':
+        final content = data['content'] ?? '';
+        _messages.add(Message.text(content: content, sender: 'PC'));
+        notifyListeners();
+        _saveMessages();
+        if (!_isInForeground) {
+          showLocalNotification("New Message", content, payload: "COPY:$content");
+        }
+        break;
+
+      case 'handshake':
+        break;
+
+      case 'file':
+        final filename = data['filename'] ?? 'Unknown file';
+        final url = data['url'] ?? '';
+        _messages.add(Message.file(filename: filename, url: url, sender: 'PC'));
+        notifyListeners();
+        _saveMessages();
+        if (!_isInForeground) {
+          showLocalNotification("File Received", filename, payload: url);
+        }
+        break;
+
+      case 'image':
+        final filename = data['filename'] ?? 'Unknown image';
+        final url = data['url'] ?? '';
+        _messages.add(Message.image(filename: filename, url: url, sender: 'PC'));
+        notifyListeners();
+        _saveMessages();
+        if (!_isInForeground) {
+          showLocalNotification("Image Received", filename, payload: url);
+        }
+        break;
+
+      case 'clipboard':
+        final clipboardContent = data['content'] ?? '';
+        if (!_isInForeground) {
+          showLocalNotification(
+            "Clipboard Sync",
+            clipboardContent.length > 50
+                ? clipboardContent.substring(0, 50) + '...'
+                : clipboardContent,
+            payload: "COPY:$clipboardContent",
+          );
+        }
+        // Store for dialog — callers check via pendingClipboard
+        _pendingClipboard = clipboardContent;
+        notifyListeners();
+        break;
+
+      case 'file-start':
+        _handleFileStart(data);
+        break;
+
+      case 'file-chunk':
+        _handleFileChunk(data);
+        break;
+
+      case 'file-end':
+        _handleFileEnd(data);
+        break;
+
+      case 'file_offer':
+        final filename = data['filename'] ?? 'Unknown file';
+        final url = data['url'] ?? '';
+        _messages.add(Message.file(filename: filename, url: url, sender: 'PC'));
+        notifyListeners();
+        _saveMessages();
+        if (!_isInForeground) {
+          showLocalNotification("File Received", filename, payload: url);
+        }
+        _pendingFileOffer = (filename: filename, url: url);
+        notifyListeners();
+        break;
+    }
+
+    _scrollToBottom();
+  }
+
+  // ─── Pending UI actions (consumed by the widget) ────────────────────
+
+  String? _pendingClipboard;
+  String? consumePendingClipboard() {
+    final val = _pendingClipboard;
+    _pendingClipboard = null;
+    return val;
+  }
+
+  ({String filename, String url})? _pendingFileOffer;
+  ({String filename, String url})? consumePendingFileOffer() {
+    final val = _pendingFileOffer;
+    _pendingFileOffer = null;
+    return val;
+  }
+
+  // ─── File transfer ──────────────────────────────────────────────────
+
+  void _handleFileStart(Map<String, dynamic> data) {
+    debugPrint(
+      '[DEBUG] File transfer starting: ${data['filename']} (${data['fileSize']} bytes)',
+    );
+    _incomingFile?._cleanup();
+    _incomingFile = _IncomingFileTransfer(
+      filename: data['filename'] as String,
+      fileSize: data['fileSize'] as int,
+      mimeType: data['mimeType'] as String? ?? 'application/octet-stream',
+    );
+  }
+
+  void _handleFileChunk(Map<String, dynamic> data) {
+    if (_incomingFile == null) {
+      debugPrint('[DEBUG] Received file-chunk without file-start — dropping');
+      return;
+    }
+    final chunkData = base64Decode(data['data'] as String);
+    _incomingFile!.chunks.add(chunkData);
+    _incomingFile!.receivedBytes += chunkData.length;
+    _incomingFile!._resetTimer();
+  }
+
+  Future<void> _handleFileEnd(Map<String, dynamic> data) async {
+    if (_incomingFile == null) {
+      debugPrint('[DEBUG] Received file-end without file-start — ignoring');
+      return;
+    }
+
+    final transfer = _incomingFile!;
+    _incomingFile = null;
+    transfer._cancelTimer();
+
+    final assembled = <int>[];
+    for (final chunk in transfer.chunks) {
+      assembled.addAll(chunk);
+    }
+
+    final checksum = await CryptoService.sha256(assembled);
+    if (checksum != data['checksum']) {
+      debugPrint(
+        '[DEBUG] File checksum mismatch: expected ${data['checksum']}, got $checksum',
+      );
+      return;
+    }
+
+    final filename = transfer.filename;
+    final isImage = RegExp(
+      r'\.(jpg|jpeg|png|gif|webp|bmp)$',
+      caseSensitive: false,
+    ).hasMatch(filename);
+
+    String fileUrl;
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final fastShareDir = Directory('${appDir.path}/FastShare');
+      if (!await fastShareDir.exists()) {
+        await fastShareDir.create(recursive: true);
+      }
+      final localFile = File('${fastShareDir.path}/$filename');
+      await localFile.writeAsBytes(assembled);
+      fileUrl = 'file://${localFile.path}';
+      debugPrint('[DEBUG] File saved locally: ${localFile.path}');
+    } catch (e) {
+      debugPrint('[DEBUG] Failed to save file locally: $e');
+      fileUrl = 'http://$ip:$httpPort/files/${Uri.encodeComponent(filename)}';
+    }
+
+    if (!_isDisconnected) {
+      if (isImage) {
+        _messages.add(Message.image(filename: filename, url: fileUrl, sender: 'PC'));
+      } else {
+        _messages.add(Message.file(filename: filename, url: fileUrl, sender: 'PC'));
+      }
+      notifyListeners();
+      _saveMessages();
+      _scrollToBottom();
+
+      if (!_isInForeground) {
+        showLocalNotification("File Received", filename, payload: fileUrl);
+      }
+    }
+
+    debugPrint(
+      '[DEBUG] File transfer complete: $filename (${transfer.receivedBytes} bytes)',
+    );
+  }
+
+  // ─── Sending ─────────────────────────────────────────────────────────
+
+  void sendText(String text) {
+    if (text.isNotEmpty && !_isDisconnected) {
+      _sendJson({'type': 'text', 'content': text});
+      _messages.add(Message.text(content: text, sender: 'Me'));
+      notifyListeners();
+      _saveMessages();
+      _scrollToBottom();
+    }
+  }
+
+  void _sendJson(Map<String, dynamic> data) {
+    if (_isDisconnected) return;
+
+    final type = data['type'] as String?;
+
+    if (type != null && isUnencryptedType(type)) {
+      channel.sink.add(jsonEncode(data));
+      return;
+    }
+
+    if (_keyExchangeComplete && _crypto.isReady) {
+      _sendEncrypted(data);
+    } else {
+      channel.sink.add(jsonEncode(data));
+    }
+  }
+
+  void _sendEncrypted(Map<String, dynamic> data) async {
+    try {
+      final encrypted = await _crypto.encrypt(data);
+      channel.sink.add(jsonEncode({'type': 'encrypted', ...encrypted}));
+    } catch (e) {
+      debugPrint('[DEBUG] Failed to encrypt message, sending plaintext: $e');
+      channel.sink.add(jsonEncode(data));
+    }
+  }
+
+  Future<void> sendFile(String filePath, String filename) async {
+    if (_isDisconnected) return;
+
+    if (!_keyExchangeComplete || !_crypto.isReady) {
+      debugPrint(
+        '[DEBUG] Key exchange not complete, falling back to HTTP upload',
+      );
+      await _uploadFileViaHttp(filePath, filename);
+      return;
+    }
+
+    try {
+      final file = File(filePath);
+      final fileBytes = await file.readAsBytes();
+      final fileSize = fileBytes.length;
+      final mimeType = _getMimeType(filename);
+      final checksum = await CryptoService.sha256(fileBytes);
+
+      _sendEncrypted({
+        'type': 'file-start',
+        'filename': filename,
+        'fileSize': fileSize,
+        'mimeType': mimeType,
+      });
+
+      const chunkSize = 64 * 1024;
+      int offset = 0;
+      int seq = 0;
+      while (offset < fileSize) {
+        final end = (offset + chunkSize > fileSize) ? fileSize : offset + chunkSize;
+        final chunk = fileBytes.sublist(offset, end);
+        _sendEncrypted({
+          'type': 'file-chunk',
+          'seq': seq,
+          'data': base64Encode(chunk),
+        });
+        offset = end;
+        seq++;
+      }
+
+      _sendEncrypted({
+        'type': 'file-end',
+        'filename': filename,
+        'checksum': checksum,
+      });
+
+      debugPrint(
+        '[DEBUG] File sent via encrypted WS: $filename ($fileSize bytes, $seq chunks)',
+      );
+    } catch (e) {
+      debugPrint(
+        '[DEBUG] Failed to send file via WS, falling back to HTTP: $e',
+      );
+      await _uploadFileViaHttp(filePath, filename);
+    }
+  }
+
+  Future<void> _uploadFileViaHttp(String filePath, String filename) async {
+    try {
+      var request = http.StreamedRequest(
+        'POST',
+        Uri.parse('http://$ip:$httpPort/upload'),
+      );
+      request.headers['x-filename'] = filename;
+      final file = File(filePath);
+      request.contentLength = await file.length();
+      request.sink.addStream(file.openRead());
+
+      final response = await request.send();
+      debugPrint('[DEBUG] HTTP upload response: ${response.statusCode}');
+    } catch (e) {
+      debugPrint('[DEBUG] HTTP upload failed: $e');
+    }
+  }
+
+  String _getMimeType(String filename) {
+    final ext = filename.split('.').last.toLowerCase();
+    const mimeMap = {
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'bmp': 'image/bmp',
+      'webp': 'image/webp',
+      'svg': 'image/svg+xml',
+      'pdf': 'application/pdf',
+      'zip': 'application/zip',
+      'txt': 'text/plain',
+      'json': 'application/json',
+      'mp4': 'video/mp4',
+      'mp3': 'audio/mpeg',
+    };
+    return mimeMap[ext] ?? 'application/octet-stream';
+  }
+
+  // ─── Clipboard ───────────────────────────────────────────────────────
+
+  void _startClipboardPolling() {
+    _clipboardPollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (_isInForeground && !_isDisconnected) {
+        checkAndSendClipboard();
+      }
+    });
+  }
+
+  void saveCurrentClipboard() {
+    Clipboard.getData(Clipboard.kTextPlain).then((data) {
+      if (data?.text != null) {
+        _lastClipboardText = data!.text;
+        debugPrint(
+          '[DEBUG] Saved clipboard state: ${_lastClipboardText?.substring(0, (_lastClipboardText!.length > 30 ? 30 : _lastClipboardText!.length))}...',
+        );
+      }
+    });
+  }
+
+  void checkAndSendClipboard() {
+    Clipboard.getData(Clipboard.kTextPlain).then((data) {
+      if (data?.text == null) return;
+      final currentClipboard = data!.text!;
+      if (currentClipboard != _lastClipboardText &&
+          currentClipboard != _lastReceivedClipboard) {
+        debugPrint(
+          '[DEBUG] Clipboard changed while in background, sending to PC',
+        );
+        _sendJson({'type': 'clipboard', 'content': currentClipboard});
+        _lastClipboardText = currentClipboard;
+      }
+    });
+  }
+
+  void setLastReceivedClipboard(String? text) {
+    _lastReceivedClipboard = text;
+  }
+
+  String? get lastReceivedClipboard => _lastReceivedClipboard;
+
+  // ─── Disconnect ──────────────────────────────────────────────────────
+
+  void handleDisconnect(String reason) {
+    if (_isDisconnected) return;
+    _isDisconnected = true;
+
+    _incomingFile?._cleanup();
+    _incomingFile = null;
+    _keyExchangeTimeout?.cancel();
+
+    channel.sink.close();
+    notifyListeners();
+
+    // Navigation is handled by the widget layer
+    _disconnectReason = reason;
+  }
+
+  void handleUserDisconnect() {
+    if (_isDisconnected) return;
+    _isDisconnected = true;
+    _intentionalDisconnect = true;
+
+    _incomingFile?._cleanup();
+    _incomingFile = null;
+    _keyExchangeTimeout?.cancel();
+
+    _sendJson({'type': 'disconnect', 'reason': 'user_initiated'});
+    debugPrint('[DEBUG] Sent disconnect message to PC');
+
+    channel.sink.close();
+    notifyListeners();
+  }
+
+  String? _disconnectReason;
+  String? get disconnectReason => _disconnectReason;
+
+  // ─── Message management ──────────────────────────────────────────────
+
+  void deleteMessage(Message message) {
+    _messages.removeWhere((m) => m.id == message.id);
+    notifyListeners();
+    _saveMessages();
+  }
+
+  void clearAllMessages() {
+    _messages.clear();
+    notifyListeners();
+    MessageStorageService.clearMessages();
+  }
+
+  // ─── Share handler ───────────────────────────────────────────────────
+
+  void setupShareHandler() {
+    ShareHandler.setupListener();
+
+    ShareHandler.registerSendCallback((data) {
+      _sendJson(data);
+      if (data['type'] == 'text' && data['content'] != null) {
+        _messages.add(
+          Message.text(content: data['content'] as String, sender: 'Me'),
+        );
+        notifyListeners();
+        _saveMessages();
+        _scrollToBottom();
+      }
+    });
+
+    ShareHandler.registerLocalMessageCallback((fileInfo) {
+      final filename = fileInfo['filename'] ?? 'Unknown';
+      final url = fileInfo['url'] ?? '';
+      final isImage =
+          filename.toLowerCase().endsWith('.jpg') ||
+          filename.toLowerCase().endsWith('.jpeg') ||
+          filename.toLowerCase().endsWith('.png') ||
+          filename.toLowerCase().endsWith('.gif') ||
+          filename.toLowerCase().endsWith('.webp') ||
+          filename.toLowerCase().endsWith('.bmp');
+      if (isImage) {
+        _messages.add(Message.image(filename: filename, url: url, sender: 'Me'));
+      } else {
+        _messages.add(Message.file(filename: filename, url: url, sender: 'Me'));
+      }
+      notifyListeners();
+      _saveMessages();
+      _scrollToBottom();
+    });
+  }
+
+  // ─── Cleanup ─────────────────────────────────────────────────────────
+
+  @override
+  void dispose() {
+    _clipboardPollTimer?.cancel();
+    _keyExchangeTimeout?.cancel();
+    _incomingFile?._cleanup();
+    ShareHandler.unregisterSendCallback();
+    _subscription?.cancel();
+    channel.sink.close();
+    scrollController.dispose();
+    super.dispose();
+  }
+}
