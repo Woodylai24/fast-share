@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["main.ts", "preload.ts", "crypto.ts"]
+  "include": ["main.ts", "preload.ts", "crypto.ts", "firebase.ts", "clipboard-sync.ts", "file-transfer.ts", "ai-summarize.ts", "server.ts", "ipc-handlers.ts"]
 }
