@@ -8,6 +8,7 @@ import 'package:fast_share_mobile/models/connection_entry.dart';
 import 'package:fast_share_mobile/services/connection_history.dart';
 import 'package:fast_share_mobile/screens/home_screen.dart';
 import 'package:fast_share_mobile/screens/chat_screen.dart';
+import 'package:fast_share_mobile/services/theme_notifier.dart';
 
 /// Screen shown while attempting to connect to PC
 /// Validates the connection before showing the main ConnectedScreen
@@ -15,12 +16,14 @@ class ConnectingScreen extends StatefulWidget {
   final String ip;
   final int port;
   final int httpPort;
+  final ThemeNotifier themeNotifier;
 
   const ConnectingScreen({
     super.key,
     required this.ip,
     required this.port,
     required this.httpPort,
+    required this.themeNotifier,
   });
 
   @override
@@ -88,6 +91,7 @@ class _ConnectingScreenState extends State<ConnectingScreen> {
                         ip: widget.ip,
                         port: widget.port,
                         httpPort: widget.httpPort,
+                        themeNotifier: widget.themeNotifier,
                       ),
                     ),
                   );
@@ -225,7 +229,10 @@ class _ConnectingScreenState extends State<ConnectingScreen> {
                 onPressed: () {
                   Navigator.pushAndRemoveUntil(
                     context,
-                    MaterialPageRoute(builder: (context) => const HomeScreen()),
+                    MaterialPageRoute(
+                      builder: (context) =>
+                          HomeScreen(themeNotifier: widget.themeNotifier),
+                    ),
                     (route) => false,
                   );
                 },
@@ -242,6 +249,7 @@ class _ConnectingScreenState extends State<ConnectingScreen> {
                         ip: widget.ip,
                         port: widget.port,
                         httpPort: widget.httpPort,
+                        themeNotifier: widget.themeNotifier,
                       ),
                     ),
                   );

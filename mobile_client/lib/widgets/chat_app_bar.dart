@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:fast_share_mobile/screens/ai_settings_page.dart';
+import 'package:fast_share_mobile/screens/settings_screen.dart';
+import 'package:fast_share_mobile/services/theme_notifier.dart';
 
 class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String connectionInfo;
@@ -7,6 +8,7 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   final VoidCallback onPickFile;
   final VoidCallback onClearHistory;
   final bool isDisconnected;
+  final ThemeNotifier themeNotifier;
 
   const ChatAppBar({
     super.key,
@@ -15,6 +17,7 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
     required this.onPickFile,
     required this.onClearHistory,
     this.isDisconnected = false,
+    required this.themeNotifier,
   });
 
   @override
@@ -28,11 +31,13 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
       actions: [
         IconButton(
           icon: const Icon(Icons.settings),
-          tooltip: 'AI Settings',
+          tooltip: 'Settings',
           onPressed: () {
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (context) => const AISettingsPage()),
+              MaterialPageRoute(
+                builder: (context) => SettingsScreen(themeNotifier: themeNotifier),
+              ),
             );
           },
         ),

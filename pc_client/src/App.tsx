@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { TitleBar } from "./TitleBar";
-import { AISettings } from "./AISettings";
+import { Settings } from "./Settings";
+import { ThemeProvider } from "./contexts/ThemeContext";
 import { SummaryPopup } from "./SummaryPopup";
 import { ContextMenu } from "./components/ContextMenu";
 import { MessageBubble } from "./components/MessageBubble";
@@ -12,7 +13,7 @@ import { type Message } from "./types";
 import "./App.css";
 
 function App() {
-  const [showAISettings, setShowAISettings] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [summaryPopup, setSummaryPopup] = useState<{
     isOpen: boolean;
     message: Message | null;
@@ -147,8 +148,8 @@ function App() {
   }, []);
 
   return (
-    <>
-      <TitleBar onSettingsClick={() => setShowAISettings(true)} />
+    <ThemeProvider>
+      <TitleBar onSettingsClick={() => setShowSettings(true)} />
       <div
         className={`container ${isDragging ? "dragging" : ""}`}
         onDrop={handleDrop}
@@ -233,11 +234,11 @@ function App() {
           </div>
         )}
 
-        {/* AI Settings Panel */}
-        <AISettings
-          isOpen={showAISettings}
+        {/* Settings Panel */}
+        <Settings
+          isOpen={showSettings}
           onClose={() => {
-            setShowAISettings(false);
+            setShowSettings(false);
             checkApiKey();
           }}
         />
@@ -264,7 +265,7 @@ function App() {
           onClose={handleCloseSummary}
         />
       </div>
-    </>
+    </ThemeProvider>
   );
 }
 

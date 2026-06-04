@@ -7,11 +7,21 @@ import { sendEncrypted, broadcastToClients, connectedClients, getLocalIp, getLoc
 import { sendFileEncrypted } from "./file-transfer";
 import { sendPushNotification, deviceFcmTokens } from "./firebase";
 import { aiSettingsStore } from "./ai-summarize";
+import settingsStore from "./settings-store";
+import { app } from "electron";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type GetMainWindowFn = () => any;
 
-function registerIpcHandlers(ipcMainInstance: typeof ipcMain, getMainWindow: GetMainWindowFn) {
+interface IpcHandlerOptions {
+  onClipboardSettingChanged?: () => void;
+}
+
+function registerIpcHandlers(
+  ipcMainInstance: typeof ipcMain,
+  getMainWindow: GetMainWindowFn,
+  options?: IpcHandlerOptions,
+) {
   // AI Settings handlers
   ipcMainInstance.handle("get-ai-settings", () => {
     const apiKeyEncrypted = aiSettingsStore.get("apiKeyEncrypted") as string;
@@ -239,6 +249,56 @@ function registerIpcHandlers(ipcMainInstance: typeof ipcMain, getMainWindow: Get
       );
     }
   });
+
+  // ── General Settings handlers ──────────────────────────────────────────
+  ipcMainInstance.handle("get-settings", () => {
+    return settingsStore.store;
+  });
+
+  ipcMainInstance.handle(
+    "save-settings",
+    (
+      _event,
+      settings: Partial<{
+        startupOnBoot: boolean;
+        minimizeToTray: boolean;
+        clipboardSync: string;
+        soundOnMessage: boolean;
+        notificationsEnabled: boolean;
+        theme: string;
+      }>,
+    ) => {
+      try {
+        const prevClipboardSync = settingsStore.get("clipboardSync");
+
+        for (const [key, value] of Object.entries(settings)) {
+          settingsStore.set(key, value);
+        }
+
+        // Side-effect: startupOnBoot → update login item
+        if (settings.startupOnBoot !== undefined) {
+          app.setLoginItemSettings({ openAtLogin: settings.startupOnBoot });
+        }
+
+        // Side-effect: clipboardSync changed → restart clipboard watcher
+        const newClipboardSync = settingsStore.get("clipboardSync");
+        if (newClipboardSync !== prevClipboardSync) {
+          options?.onClipboardSettingChanged?.();
+        }
+
+        // Notify renderer of the updated settings
+        const mw = getMainWindow();
+        if (mw && !mw.isDestroyed()) {
+          mw.webContents.send("settings-changed", settingsStore.store);
+        }
+
+        return { success: true };
+      } catch (error) {
+        console.error("[Settings] Failed to save settings:", error);
+        return { success: false };
+      }
+    },
+  );
 }
 
 export { registerIpcHandlers };

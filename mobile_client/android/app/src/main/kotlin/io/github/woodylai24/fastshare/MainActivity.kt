@@ -10,11 +10,27 @@ import java.io.FileOutputStream
 class MainActivity : FlutterActivity() {
     private val SHARE_CHANNEL = "fast_share/share_receiver"
     private val FILE_CHANNEL = "fast_share/file_helper"
+    private val SETTINGS_CHANNEL = "fast_share/settings"
 
     override fun configureFlutterEngine(flutterEngine: io.flutter.embedding.engine.FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         setupFileHelperChannel(flutterEngine)
+        setupSettingsChannel(flutterEngine)
         checkPendingShare(flutterEngine)
+    }
+
+    private fun setupSettingsChannel(flutterEngine: io.flutter.embedding.engine.FlutterEngine) {
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SETTINGS_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "setStartupOnBoot" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        BootReceiver.setEnabled(this, enabled)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
     }
 
     override fun onNewIntent(intent: Intent) {

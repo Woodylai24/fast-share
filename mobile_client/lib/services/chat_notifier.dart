@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:fast_share_mobile/models/message.dart';
 import 'package:fast_share_mobile/services/message_storage.dart';
 import 'package:fast_share_mobile/services/notifications.dart';
+import 'package:fast_share_mobile/services/settings_service.dart';
 import 'package:fast_share_mobile/crypto_service.dart';
 import 'package:fast_share_mobile/share_handler.dart';
 
@@ -288,13 +289,25 @@ class ChatNotifier extends ChangeNotifier {
 
     if (isInForeground) {
       if (!_intentionalDisconnect && !_isConnected()) {
-        debugPrint('[DEBUG] App resumed, attempting reconnect...');
-        attemptReconnect();
+        _attemptReconnectIfEnabled();
       }
       checkAndSendClipboard();
     } else {
       saveCurrentClipboard();
     }
+  }
+
+  /// Checks the autoReconnect setting before attempting reconnect.
+  Future<void> _attemptReconnectIfEnabled() async {
+    final autoReconnect = await SettingsService.getAutoReconnect();
+    if (!autoReconnect) {
+      debugPrint(
+        '[DEBUG] Auto-reconnect is disabled, showing disconnected state',
+      );
+      return;
+    }
+    debugPrint('[DEBUG] App resumed, attempting reconnect...');
+    attemptReconnect();
   }
 
   // ─── Message handling (raw) ──────────────────────────────────────────
@@ -374,7 +387,7 @@ class ChatNotifier extends ChangeNotifier {
 
   // ─── Incoming message dispatch ───────────────────────────────────────
 
-  void _handleIncomingMessage(Map<String, dynamic> data) {
+  Future<void> _handleIncomingMessage(Map<String, dynamic> data) async {
     final String msgType = data['type'] ?? 'text';
 
     if (_isDisconnected) return;
@@ -417,6 +430,27 @@ class ChatNotifier extends ChangeNotifier {
 
       case 'clipboard':
         final clipboardContent = data['content'] ?? '';
+        // Check the user's clipboard sync setting
+        final clipboardSync = await SettingsService.getClipboardSync();
+        if (clipboardSync == 'none') {
+          // Silently ignore clipboard messages
+          break;
+        }
+        if (clipboardSync == 'auto') {
+          // Auto-copy to device clipboard
+          _lastReceivedClipboard = clipboardContent;
+          _lastClipboardText = clipboardContent;
+          await Clipboard.setData(ClipboardData(text: clipboardContent));
+          // Show a notification (both foreground and background)
+          showLocalNotification(
+            "Clipboard Synced",
+            clipboardContent.length > 50
+                ? clipboardContent.substring(0, 50) + '...'
+                : clipboardContent,
+          );
+          break;
+        }
+        // 'notify' — current behavior: show dialog / notification with copy option
         if (!_isInForeground) {
           showLocalNotification(
             "Clipboard Sync",
