@@ -66,30 +66,16 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
 
   switch (msgType) {
     case "clipboard": {
-      const { getClipboardSyncMode, setLastClipboardText } = require("./clipboard-sync");
-      const clipMode = getClipboardSyncMode() as "none" | "notify" | "auto";
+      // Incoming clipboard events are ALWAYS auto-copied regardless of the
+      // local clipboard-sync setting (the setting only controls OUTGOING).
+      const { setLastClipboardText } = require("./clipboard-sync");
+      const { clipboard, Notification } = require("electron");
 
-      if (clipMode === "none") {
-        console.log("[DEBUG] Received clipboard from mobile but sync is disabled (mode: none) — ignoring");
-        break;
-      }
+      clipboard.writeText(data.content);
+      setLastClipboardText(data.content);
+      console.log("[DEBUG] Received clipboard from mobile, auto-copied to clipboard");
 
-      const { Notification } = require("electron");
-
-      if (clipMode === "auto") {
-        // Auto-copy to clipboard
-        const { clipboard } = require("electron");
-        clipboard.writeText(data.content);
-        setLastClipboardText(data.content);
-        console.log("[DEBUG] Received clipboard from mobile, auto-copied (mode: auto)");
-      } else {
-        // 'notify' mode — do NOT auto-copy, just notify
-        console.log("[DEBUG] Received clipboard from mobile, notify only (mode: notify)");
-        // Send to renderer so it can show a click-to-copy prompt
-        getMainWindow()?.webContents.send("clipboard-received", { content: data.content });
-      }
-
-      // Show Windows notification in both auto and notify modes
+      // Show Windows notification
       if (Notification.isSupported()) {
         new Notification({
           title: "Fast Share - Clipboard Sync",

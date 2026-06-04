@@ -407,6 +407,13 @@
   margin-top: -4px;
 }
 
+/* ─── Description text (e.g. clipboard sync) ─── */
+.settings-description {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
 /* ─── About ─── */
 .settings-version {
   font-size: 13px;

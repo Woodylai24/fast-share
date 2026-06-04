@@ -430,39 +430,17 @@ class ChatNotifier extends ChangeNotifier {
 
       case 'clipboard':
         final clipboardContent = data['content'] ?? '';
-        // Check the user's clipboard sync setting
-        final clipboardSync = await SettingsService.getClipboardSync();
-        if (clipboardSync == 'none') {
-          // Silently ignore clipboard messages
-          break;
-        }
-        if (clipboardSync == 'auto') {
-          // Auto-copy to device clipboard
-          _lastReceivedClipboard = clipboardContent;
-          _lastClipboardText = clipboardContent;
-          await Clipboard.setData(ClipboardData(text: clipboardContent));
-          // Show a notification (both foreground and background)
-          showLocalNotification(
-            "Clipboard Synced",
-            clipboardContent.length > 50
-                ? clipboardContent.substring(0, 50) + '...'
-                : clipboardContent,
-          );
-          break;
-        }
-        // 'notify' — current behavior: show dialog / notification with copy option
-        if (!_isInForeground) {
-          showLocalNotification(
-            "Clipboard Sync",
-            clipboardContent.length > 50
-                ? clipboardContent.substring(0, 50) + '...'
-                : clipboardContent,
-            payload: "COPY:$clipboardContent",
-          );
-        }
-        // Store for dialog — callers check via pendingClipboard
-        _pendingClipboard = clipboardContent;
-        notifyListeners();
+        // Incoming clipboard is ALWAYS auto-copied regardless of local setting
+        // The clipboard sync setting only controls OUTGOING behavior
+        _lastReceivedClipboard = clipboardContent;
+        _lastClipboardText = clipboardContent;
+        await Clipboard.setData(ClipboardData(text: clipboardContent));
+        showLocalNotification(
+          "Clipboard Synced",
+          clipboardContent.length > 50
+              ? clipboardContent.substring(0, 50) + '...'
+              : clipboardContent,
+        );
         break;
 
       case 'file-start':
@@ -761,11 +739,21 @@ class ChatNotifier extends ChangeNotifier {
       final currentClipboard = data!.text!;
       if (currentClipboard != _lastClipboardText &&
           currentClipboard != _lastReceivedClipboard) {
-        debugPrint(
-          '[DEBUG] Clipboard changed while in background, sending to PC',
-        );
-        _sendJson({'type': 'clipboard', 'content': currentClipboard});
-        _lastClipboardText = currentClipboard;
+        // Check outgoing clipboard setting — only send if not 'none'
+        SettingsService.getClipboardSync().then((clipboardSync) {
+          if (clipboardSync == 'none') return;
+          debugPrint(
+            '[DEBUG] Clipboard changed while in background, sending to PC',
+          );
+          if (clipboardSync == 'notify') {
+            // Send as regular text message
+            _sendJson({'type': 'text', 'content': currentClipboard});
+          } else {
+            // 'auto' — send as clipboard sync
+            _sendJson({'type': 'clipboard', 'content': currentClipboard});
+          }
+          _lastClipboardText = currentClipboard;
+        });
       }
     });
   }

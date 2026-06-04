@@ -169,6 +169,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  // ── Clipboard sync description ────────────────────────────────────
+
+  String _clipboardSyncDescription(String value) {
+    switch (value) {
+      case 'none':
+        return 'Clipboard changes on this device will not be shared.';
+      case 'notify':
+        return 'Clipboard changes will be sent as regular text messages.';
+      case 'auto':
+        return 'Clipboard changes will be sent to the other device and auto-copied.';
+      default:
+        return '';
+    }
+  }
+
   // ── Build ────────────────────────────────────────────────────────────
 
   @override
@@ -305,6 +320,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           await SettingsService.setClipboardSync(value);
                           setState(() => _clipboardSync = value);
                         },
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _clipboardSyncDescription(_clipboardSync),
+                        style: TextStyle(
+                          color: colorScheme.onSurface.withValues(alpha: 0.6),
+                          fontSize: 12,
+                        ),
                       ),
                     ],
                   ),
