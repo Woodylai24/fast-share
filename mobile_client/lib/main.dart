@@ -10,6 +10,8 @@ import 'package:fast_share_mobile/services/notifications.dart';
 import 'package:fast_share_mobile/services/theme_notifier.dart';
 import 'package:fast_share_mobile/theme/app_theme.dart';
 import 'package:fast_share_mobile/screens/home_screen.dart';
+import 'package:fast_share_mobile/screens/onboarding_screen.dart';
+import 'package:fast_share_mobile/services/settings_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -97,25 +99,50 @@ Future<void> main() async {
   runApp(FastShareApp(themeNotifier: themeNotifier));
 }
 
-class FastShareApp extends StatelessWidget {
+class FastShareApp extends StatefulWidget {
   final ThemeNotifier themeNotifier;
 
   const FastShareApp({super.key, required this.themeNotifier});
 
   @override
+  State<FastShareApp> createState() => _FastShareAppState();
+}
+
+class _FastShareAppState extends State<FastShareApp> {
+  bool _onboardingComplete = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOnboardingState();
+  }
+
+  Future<void> _loadOnboardingState() async {
+    final complete = await SettingsService.getOnboardingComplete();
+    if (mounted) {
+      setState(() => _onboardingComplete = complete);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: themeNotifier,
+      listenable: widget.themeNotifier,
       builder: (context, child) {
         return MaterialApp(
           title: 'Fast Share Mobile',
           theme: AppTheme.light,
           darkTheme: AppTheme.dark,
-          themeMode: themeNotifier.mode,
-          home: child,
+          themeMode: widget.themeNotifier.mode,
+          home: _onboardingComplete
+              ? HomeScreen(themeNotifier: widget.themeNotifier)
+              : OnboardingScreen(
+                  onComplete: () {
+                    setState(() => _onboardingComplete = true);
+                  },
+                ),
         );
       },
-      child: HomeScreen(themeNotifier: themeNotifier),
     );
   }
 }

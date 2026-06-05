@@ -462,6 +462,15 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
           {/* ─── ABOUT ─── */}
           <section className="settings-section">
             <h3 className="settings-section-title">About</h3>
+            <button
+              className="settings-replay-btn"
+              onClick={async () => {
+                await window.electronAPI.saveSettings({ onboardingComplete: false });
+                window.location.reload();
+              }}
+            >
+              Replay onboarding
+            </button>
             <div className="settings-row">
               <span className="settings-row-label">Version</span>
               <span className="settings-version">1.0.0</span>
