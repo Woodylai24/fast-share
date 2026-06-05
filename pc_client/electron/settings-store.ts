@@ -5,7 +5,7 @@ const settingsStore = new ElectronStore({
   defaults: {
     startupOnBoot: false,
     minimizeToTray: false,
-    clipboardSync: "notify",
+    clipboardSync: "auto-message",
     soundOnMessage: true,
     notificationsEnabled: true,
     theme: "system",

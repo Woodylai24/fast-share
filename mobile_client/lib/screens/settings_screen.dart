@@ -27,7 +27,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _themeMode = 'system'; // 'system' | 'light' | 'dark'
 
   // ── Connection state ─────────────────────────────────────────────────
-  String _clipboardSync = 'notify'; // 'none' | 'notify' | 'auto'
+  String _clipboardSync = 'auto-message'; // 'none' | 'auto-message' | 'auto-sync'
 
   // ── AI state (same as AISettingsPage) ────────────────────────────────
   final TextEditingController _apiKeyController = TextEditingController();
@@ -175,9 +175,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     switch (value) {
       case 'none':
         return 'Clipboard changes on this device will not be shared.';
-      case 'notify':
+      case 'auto-message':
         return 'Clipboard changes will be sent as regular text messages.';
-      case 'auto':
+      case 'auto-sync':
         return 'Clipboard changes will be sent to the other device and auto-copied.';
       default:
         return '';
@@ -306,11 +306,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             label: Text('No sync'),
                           ),
                           ButtonSegment(
-                            value: 'notify',
+                            value: 'auto-message',
                             label: Text('Auto send'),
                           ),
                           ButtonSegment(
-                            value: 'auto',
+                            value: 'auto-sync',
                             label: Text('Auto sync'),
                           ),
                         ],

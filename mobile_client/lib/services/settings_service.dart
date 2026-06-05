@@ -13,7 +13,7 @@ class SettingsService {
   static const bool _defaultStartupOnBoot = false;
   static const bool _defaultAutoConnectOnLaunch = true;
   static const bool _defaultAutoReconnect = true;
-  static const String _defaultClipboardSync = 'notify';
+  static const String _defaultClipboardSync = 'auto-message';
   static const String _defaultTheme = 'system';
 
   static Future<SharedPreferences> get _prefs async {
@@ -65,17 +65,17 @@ class SettingsService {
 
   // --- clipboardSync ---
 
-  /// Clipboard sync mode: 'none', 'notify', or 'auto'.
+  /// Clipboard sync mode: 'none', 'auto-message', or 'auto-sync'.
   static Future<String> getClipboardSync() async {
     final prefs = await _prefs;
     return prefs.getString(_clipboardSyncKey) ?? _defaultClipboardSync;
   }
 
-  /// Set clipboard sync mode. Valid values: 'none', 'notify', 'auto'.
+  /// Set clipboard sync mode. Valid values: 'none', 'auto-message', 'auto-sync'.
   static Future<void> setClipboardSync(String value) async {
     assert(
-      value == 'none' || value == 'notify' || value == 'auto',
-      'clipboardSync must be one of: none, notify, auto',
+      value == 'none' || value == 'auto-message' || value == 'auto-sync',
+      'clipboardSync must be one of: none, auto-message, auto-sync',
     );
     final prefs = await _prefs;
     await prefs.setString(_clipboardSyncKey, value);
