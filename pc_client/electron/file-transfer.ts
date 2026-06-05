@@ -56,6 +56,11 @@ type SendEncryptedFn = (client: any, data: object) => void;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type GetMainWindowFn = () => any;
 
+/** Tell the renderer to play the notification sound via IPC. */
+function playNotificationSound(getMainWindow: GetMainWindowFn) {
+  getMainWindow()?.webContents.send("play-notification-sound");
+}
+
 /**
  * Process a decrypted (or plaintext legacy) message from a mobile client.
  * Handles file-start, file-chunk, file-end, clipboard, text, file, image, and default messages.
@@ -79,14 +84,18 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
       // Show Windows notification (gated by notificationsEnabled setting)
       const notificationsEnabled = settingsStore.get("notificationsEnabled", true) as boolean;
       if (notificationsEnabled && Notification.isSupported()) {
+        const soundOnMessage = settingsStore.get("soundOnMessage", true) as boolean;
         new Notification({
           title: "Fast Share - Clipboard Sync",
           body:
             data.content.length > 100
               ? data.content.substring(0, 100) + "..."
               : data.content,
-          silent: false,
+          silent: true,
         }).show();
+        if (soundOnMessage) {
+          playNotificationSound(getMainWindow);
+        }
       }
 
       getMainWindow()?.webContents.send("ws-message", data);
@@ -102,14 +111,18 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
       const notificationsEnabled = settingsStore.get("notificationsEnabled", true) as boolean;
       if (notificationsEnabled && ElectronNotification.isSupported()) {
         const text = typeof data.content === "string" ? data.content : "";
+        const soundOnMessage = settingsStore.get("soundOnMessage", true) as boolean;
         new ElectronNotification({
           title: "Fast Share - New Message",
           body:
             text.length > 100
               ? text.substring(0, 100) + "..."
               : text,
-          silent: false,
+          silent: true,
         }).show();
+        if (soundOnMessage) {
+          playNotificationSound(getMainWindow);
+        }
       }
       break;
     }

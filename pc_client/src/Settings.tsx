@@ -19,7 +19,7 @@ interface GeneralSettings {
   minimizeToTray: boolean;
   clipboardSync: string;
   soundOnMessage: boolean;
-  windowsNotifications: boolean;
+  notificationsEnabled: boolean;
 }
 
 export function Settings({ isOpen, onClose }: SettingsProps) {
@@ -34,7 +34,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
 
   // Notifications
   const [soundOnMessage, setSoundOnMessage] = useState(true);
-  const [windowsNotifications, setWindowsNotifications] = useState(true);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
 
   // AI
   const [provider, setProvider] = useState("openrouter");
@@ -58,8 +58,8 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
         setMinimizeToTray((settings.minimizeToTray as boolean) ?? false);
         setClipboardSync((settings.clipboardSync as string) ?? "none");
         setSoundOnMessage((settings.soundOnMessage as boolean) ?? true);
-        setWindowsNotifications(
-          (settings.windowsNotifications as boolean) ?? true
+        setNotificationsEnabled(
+          (settings.notificationsEnabled as boolean) ?? true
         );
       } catch (err) {
         console.error("Failed to load settings:", err);
@@ -316,18 +316,18 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
             </div>
 
             <div className="settings-row">
-              <span className="settings-row-label">Windows notifications</span>
+              <span className="settings-row-label">Notifications</span>
               <button
-                className={`settings-toggle ${windowsNotifications ? "on" : ""}`}
+                className={`settings-toggle ${notificationsEnabled ? "on" : ""}`}
                 onClick={() =>
                   handleToggle(
-                    "windowsNotifications",
-                    windowsNotifications,
-                    setWindowsNotifications
+                    "notificationsEnabled",
+                    notificationsEnabled,
+                    setNotificationsEnabled
                   )
                 }
                 role="switch"
-                aria-checked={windowsNotifications}
+                aria-checked={notificationsEnabled}
               >
                 <span className="settings-toggle-thumb" />
               </button>

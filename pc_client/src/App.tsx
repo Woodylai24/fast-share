@@ -56,6 +56,33 @@ function App() {
     }
   }, []);
 
+  // Block Ctrl+A globally (except in input/textarea/select fields)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.key === "a" &&
+        (e.ctrlKey || e.metaKey) &&
+        !(e.target instanceof HTMLInputElement) &&
+        !(e.target instanceof HTMLTextAreaElement) &&
+        !(e.target instanceof HTMLSelectElement)
+      ) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Play notification sound when main process requests it
+  useEffect(() => {
+    const cleanup = window.electronAPI.onPlayNotificationSound(() => {
+      const audio = new Audio("notification.wav");
+      audio.volume = 0.5;
+      audio.play().catch(() => { /* ignore playback errors */ });
+    });
+    return cleanup;
+  }, []);
+
   useEffect(() => {
     checkApiKey();
   }, [checkApiKey]);
