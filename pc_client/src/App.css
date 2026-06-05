@@ -6,8 +6,10 @@
   width: 100%;
   height: 100%;
   position: relative;
-  display: flex;
-  flex-direction: column;
+ display: flex;
+ flex-direction: column;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .container {
@@ -26,11 +28,11 @@
 
 .container.dragging {
   background-color: rgba(0, 123, 255, 0.1);
-  border-color: #007bff;
+  border-color: var(--accent);
 }
 
 .card {
-  background: #242424;
+  background: var(--bg-primary);
   padding: 2rem;
   border-radius: 16px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
@@ -39,11 +41,11 @@
 }
 
 .qr-section {
-  background: white;
+  background: var(--bg-primary);
   padding: 1.5rem;
   border-radius: 12px;
   margin-bottom: 1rem;
-  color: #333;
+  color: var(--content-text);
 }
 
 .qr-section p {
@@ -52,10 +54,12 @@
 }
 
 .mono {
-  font-family: monospace;
-  background: #eee;
-  padding: 0.2rem 0.5rem;
-  border-radius: 4px;
+ font-family: monospace;
+ background: var(--bg-received);
+ padding: 0.2rem 0.5rem;
+ border-radius: 4px;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .status {
@@ -94,25 +98,25 @@
 .clear-history-btn {
   padding: 0.3rem 0.6rem;
   font-size: 0.8rem;
-  background: #444;
+  background: var(--border-primary);
   border: none;
   border-radius: 4px;
-  color: #fff;
+  color: var(--text-sent);
   cursor: pointer;
   transition: background 0.2s;
 }
 
 .clear-history-btn:hover {
-  background: #666;
+  background: var(--border-primary);
 }
 
 .message-list {
-  background: #1a1a1a;
+  background: var(--bg-secondary);
   height: 300px;
   overflow-y: auto;
   padding: 1rem;
   border-radius: 8px;
-  border: 1px solid #333;
+  border: 1px solid var(--border-secondary);
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
@@ -132,12 +136,12 @@
   content: "";
   flex: 1;
   height: 1px;
-  background: #444;
+  background: var(--border-primary);
 }
 
 .day-separator span {
   padding: 0 1rem;
-  color: #888;
+  color: var(--text-muted);
   font-size: 0.75rem;
   font-weight: 500;
 }
@@ -151,8 +155,8 @@
 }
 
 .message-system span {
-  background: #333;
-  color: #888;
+  background: var(--bg-received);
+  color: var(--text-muted);
   font-size: 0.75rem;
   padding: 0.25rem 0.75rem;
   border-radius: 12px;
@@ -177,34 +181,36 @@
 
 .message-mine {
   align-self: flex-end;
-  background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
-  color: white;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+  color: var(--text-sent);
   border-bottom-right-radius: 4px;
 }
 
 .message-other {
   align-self: flex-start;
-  background: #333;
-  color: white;
+  background: var(--bg-received);
+  color: var(--text-received);
   border-bottom-left-radius: 4px;
 }
 
 .message-sender {
   font-size: 0.7rem;
-  color: #888;
+  color: var(--text-muted);
   margin-bottom: 0.25rem;
   font-weight: 500;
 }
 
 .message-text {
-  font-size: 0.9rem;
-  word-break: break-word;
-  line-height: 1.4;
+ font-size: 0.9rem;
+ word-break: break-word;
+ line-height: 1.4;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .message-time {
   font-size: 0.65rem;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-secondary);
   text-align: right;
   margin-top: 0.25rem;
 }
@@ -259,14 +265,14 @@
 
 .file-action {
   font-size: 0.7rem;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-secondary);
 }
 
 /* Context menu */
 .context-menu {
   position: fixed;
-  background: #2a2a2a;
-  border: 1px solid #444;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   z-index: 1000;
@@ -280,7 +286,7 @@
   padding: 0.6rem 1rem;
   background: none;
   border: none;
-  color: #fff;
+  color: var(--text-primary);
   text-align: left;
   cursor: pointer;
   font-size: 0.85rem;
@@ -288,7 +294,7 @@
 }
 
 .context-menu-item:hover {
-  background: #3a3a3a;
+  background: var(--bg-hover);
 }
 
 .context-menu-item.delete {
@@ -300,7 +306,7 @@
 }
 
 .context-menu-item:disabled {
-  color: #666;
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 
@@ -319,32 +325,32 @@ input[type="text"] {
   flex: 1;
   padding: 0.6rem;
   border-radius: 4px;
-  border: 1px solid #555;
-  background: #242424;
-  color: white;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-input);
+  color: var(--text-primary);
 }
 
 input[type="text"]:focus {
   outline: none;
-  border-color: #007bff;
+  border-color: var(--accent);
 }
 
 button {
   padding: 0.6rem 1.2rem;
   border-radius: 4px;
   border: none;
-  background: #007bff;
-  color: white;
+  background: var(--accent);
+  color: var(--text-sent);
   cursor: pointer;
   transition: background 0.2s;
 }
 
 button:hover {
-  background: #0056b3;
+  background: var(--accent-hover);
 }
 
 button:disabled {
-  background: #555;
+  background: var(--border-primary);
   cursor: not-allowed;
 }
 
@@ -358,12 +364,12 @@ button:disabled {
 }
 
 .message-list::-webkit-scrollbar-thumb {
-  background: #444;
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 
 .message-list::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: var(--border-primary);
 }
 
 /* Image error fallback */
@@ -374,7 +380,7 @@ button:disabled {
   justify-content: center;
   gap: 0.5rem;
   padding: 1.5rem;
-  background: #333;
+  background: var(--bg-received);
   border-radius: 8px;
   min-width: 150px;
   min-height: 100px;
@@ -386,5 +392,5 @@ button:disabled {
 
 .image-error span:last-child {
   font-size: 0.75rem;
-  color: #888;
+  color: var(--text-muted);
 }

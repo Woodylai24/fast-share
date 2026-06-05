@@ -3,7 +3,7 @@
   justify-content: space-between;
   align-items: center;
   height: 32px;
-  background: #242424;
+  background: var(--bg-primary);
   -webkit-app-region: drag;
   user-select: none;
   position: fixed;
@@ -25,7 +25,7 @@
 .title-bar-title {
   font-size: 13px;
   font-weight: 500;
-  color: #ffffff;
+  color: var(--text-primary);
   opacity: 0.9;
 }
 
@@ -44,7 +44,7 @@
   height: 32px;
   border: none;
   background: transparent;
-  color: #ffffff;
+  color: var(--text-primary);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -66,7 +66,7 @@
 }
 
 .title-bar-button:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-hover);
 }
 
 .title-bar-button.settings {
@@ -74,7 +74,7 @@
 }
 
 .title-bar-button.close:hover {
-  background: #e81123;
+  background: var(--titlebar-close-hover);
 }
 
 .title-bar-button.close {

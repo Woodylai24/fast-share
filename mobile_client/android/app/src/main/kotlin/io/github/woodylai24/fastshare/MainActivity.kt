@@ -2,6 +2,8 @@ package io.github.woodylai24.fastshare
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
@@ -10,11 +12,44 @@ import java.io.FileOutputStream
 class MainActivity : FlutterActivity() {
     private val SHARE_CHANNEL = "fast_share/share_receiver"
     private val FILE_CHANNEL = "fast_share/file_helper"
+    private val SETTINGS_CHANNEL = "fast_share/settings"
 
     override fun configureFlutterEngine(flutterEngine: io.flutter.embedding.engine.FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         setupFileHelperChannel(flutterEngine)
+        setupSettingsChannel(flutterEngine)
         checkPendingShare(flutterEngine)
+    }
+
+    private fun setupSettingsChannel(flutterEngine: io.flutter.embedding.engine.FlutterEngine) {
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SETTINGS_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "setStartupOnBoot" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        BootReceiver.setEnabled(this, enabled)
+                        result.success(null)
+                    }
+                    "openNotificationSettings" -> {
+                        try {
+                            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                                }
+                            } else {
+                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = Uri.fromParts("package", packageName, null)
+                                }
+                            }
+                            startActivity(intent)
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("OPEN_FAILED", "Could not open notification settings", e.message)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
     }
 
     override fun onNewIntent(intent: Intent) {

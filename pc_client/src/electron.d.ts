@@ -43,6 +43,11 @@ export interface IElectronAPI {
   onSummarizeChunk: (callback: (data: { streamId: string; text: string }) => void) => () => void;
   onSummarizeDone: (callback: (data: { streamId: string }) => void) => () => void;
   onSummarizeError: (callback: (data: { streamId: string; error: string }) => void) => () => void;
+  // General settings (theme, etc.)
+  getSettings: () => Promise<{ theme?: string; [key: string]: unknown }>;
+  saveSettings: (settings: { theme?: string; [key: string]: unknown }) => Promise<{ success: boolean }>;
+  onSettingsChanged: (callback: (settings: Record<string, unknown>) => void) => () => void;
+  onPlayNotificationSound: (callback: () => void) => () => void;
 }
 
 declare global {

@@ -7,10 +7,15 @@ import 'package:fast_share_mobile/models/connection_entry.dart';
 import 'package:fast_share_mobile/services/connection_history.dart';
 import 'package:fast_share_mobile/services/notifications.dart';
 import 'package:fast_share_mobile/screens/connecting_screen.dart';
+import 'package:fast_share_mobile/screens/settings_screen.dart';
+import 'package:fast_share_mobile/services/settings_service.dart';
+import 'package:fast_share_mobile/services/theme_notifier.dart';
 import 'package:fast_share_mobile/widgets/qr_scanner.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final ThemeNotifier themeNotifier;
+
+  const HomeScreen({super.key, required this.themeNotifier});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -78,6 +83,15 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     _autoConnectAttempted = true;
 
+    // Check auto-connect setting
+    final autoConnectOnLaunch = await SettingsService.getAutoConnectOnLaunch();
+    if (!autoConnectOnLaunch) {
+      debugPrint(
+        '[DEBUG] Auto-connect on launch is disabled, skipping auto-connect',
+      );
+      return;
+    }
+
     if (_connectionHistory.isEmpty) {
       debugPrint('[DEBUG] No connection history, skipping auto-connect');
       return;
@@ -128,6 +142,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ip: lastConnection.ip,
               port: lastConnection.port,
               httpPort: lastConnection.httpPort,
+              themeNotifier: widget.themeNotifier,
             ),
           ),
         );
@@ -177,7 +192,12 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       MaterialPageRoute(
         builder: (context) =>
-            ConnectingScreen(ip: ip, port: port, httpPort: httpPort),
+            ConnectingScreen(
+              ip: ip,
+              port: port,
+              httpPort: httpPort,
+              themeNotifier: widget.themeNotifier,
+            ),
       ),
     );
   }
@@ -193,13 +213,47 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     if (_isLoading || _isAutoConnecting) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Fast Share')),
+        appBar: AppBar(
+          title: const Text('Fast Share'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.settings),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => SettingsScreen(
+                      themeNotifier: widget.themeNotifier,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Fast Share')),
+      appBar: AppBar(
+        title: const Text('Fast Share'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => SettingsScreen(
+                    themeNotifier: widget.themeNotifier,
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24.0),
@@ -369,7 +423,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => const ScannerScreen(),
+                          builder: (context) => ScannerScreen(themeNotifier: widget.themeNotifier),
                         ),
                       );
                     }

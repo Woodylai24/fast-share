@@ -8,18 +8,21 @@ import 'package:fast_share_mobile/widgets/message_input.dart';
 import 'package:fast_share_mobile/widgets/clipboard_dialog.dart';
 import 'package:fast_share_mobile/widgets/file_offer_dialog.dart';
 import 'package:fast_share_mobile/widgets/message_actions.dart';
+import 'package:fast_share_mobile/services/theme_notifier.dart';
 import 'package:fast_share_mobile/screens/home_screen.dart';
 
 class ConnectedScreen extends StatefulWidget {
   final String ip;
   final int port;
   final int httpPort;
+  final ThemeNotifier themeNotifier;
 
   const ConnectedScreen({
     super.key,
     required this.ip,
     required this.port,
     required this.httpPort,
+    required this.themeNotifier,
   });
 
   @override
@@ -69,7 +72,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
       final reason = _notifier.disconnectReason;
       Navigator.pushAndRemoveUntil(
         context,
-        MaterialPageRoute(builder: (context) => const HomeScreen()),
+        MaterialPageRoute(
+          builder: (context) => HomeScreen(themeNotifier: widget.themeNotifier),
+        ),
         (route) => false,
       );
       if (reason != null) {
@@ -92,7 +97,9 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     _notifier.handleUserDisconnect();
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(builder: (context) => const HomeScreen()),
+      MaterialPageRoute(
+        builder: (context) => HomeScreen(themeNotifier: widget.themeNotifier),
+      ),
       (route) => false,
     );
   }
@@ -135,6 +142,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
               _notifier.clearAllMessages,
             ),
             isDisconnected: _notifier.isDisconnected,
+            themeNotifier: widget.themeNotifier,
           ),
           body: Column(
             children: [

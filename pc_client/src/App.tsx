@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { TitleBar } from "./TitleBar";
-import { AISettings } from "./AISettings";
+import { Settings } from "./Settings";
+import { ThemeProvider } from "./contexts/ThemeContext";
 import { SummaryPopup } from "./SummaryPopup";
 import { ContextMenu } from "./components/ContextMenu";
 import { MessageBubble } from "./components/MessageBubble";
@@ -12,7 +13,7 @@ import { type Message } from "./types";
 import "./App.css";
 
 function App() {
-  const [showAISettings, setShowAISettings] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [summaryPopup, setSummaryPopup] = useState<{
     isOpen: boolean;
     message: Message | null;
@@ -43,7 +44,7 @@ function App() {
     clearHistory,
     addSentFileMessage,
     messageListRef,
-  } = useMessages();
+  } = useMessages({ messages, setMessages });
 
   // Check API key
   const checkApiKey = useCallback(async () => {
@@ -53,6 +54,33 @@ function App() {
     } catch {
       setHasApiKey(false);
     }
+  }, []);
+
+  // Block Ctrl+A globally (except in input/textarea/select fields)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.key === "a" &&
+        (e.ctrlKey || e.metaKey) &&
+        !(e.target instanceof HTMLInputElement) &&
+        !(e.target instanceof HTMLTextAreaElement) &&
+        !(e.target instanceof HTMLSelectElement)
+      ) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Play notification sound when main process requests it
+  useEffect(() => {
+    const cleanup = window.electronAPI.onPlayNotificationSound(() => {
+      const audio = new Audio("notification.wav");
+      audio.volume = 0.5;
+      audio.play().catch(() => { /* ignore playback errors */ });
+    });
+    return cleanup;
   }, []);
 
   useEffect(() => {
@@ -147,8 +175,8 @@ function App() {
   }, []);
 
   return (
-    <>
-      <TitleBar onSettingsClick={() => setShowAISettings(true)} />
+    <ThemeProvider>
+      <TitleBar onSettingsClick={() => setShowSettings(true)} />
       <div
         className={`container ${isDragging ? "dragging" : ""}`}
         onDrop={handleDrop}
@@ -233,11 +261,11 @@ function App() {
           </div>
         )}
 
-        {/* AI Settings Panel */}
-        <AISettings
-          isOpen={showAISettings}
+        {/* Settings Panel */}
+        <Settings
+          isOpen={showSettings}
           onClose={() => {
-            setShowAISettings(false);
+            setShowSettings(false);
             checkApiKey();
           }}
         />
@@ -264,7 +292,7 @@ function App() {
           onClose={handleCloseSummary}
         />
       </div>
-    </>
+    </ThemeProvider>
   );
 }
 

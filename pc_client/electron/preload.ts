@@ -64,4 +64,26 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("summarize-error", listener);
     return () => ipcRenderer.removeListener("summarize-error", listener);
   },
+  // General Settings
+  getSettings: () => ipcRenderer.invoke("get-settings"),
+  saveSettings: (
+    settings: Partial<{
+      startupOnBoot: boolean;
+      minimizeToTray: boolean;
+      clipboardSync: string;
+      soundOnMessage: boolean;
+      notificationsEnabled: boolean;
+      theme: string;
+    }>,
+  ) => ipcRenderer.invoke("save-settings", settings),
+  onSettingsChanged: (callback: (settings: Record<string, unknown>) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: Record<string, unknown>) => callback(value);
+    ipcRenderer.on("settings-changed", listener);
+    return () => ipcRenderer.removeListener("settings-changed", listener);
+  },
+  onPlayNotificationSound: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("play-notification-sound", listener);
+    return () => ipcRenderer.removeListener("play-notification-sound", listener);
+  },
 });

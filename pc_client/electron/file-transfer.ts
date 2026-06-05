@@ -56,6 +56,11 @@ type SendEncryptedFn = (client: any, data: object) => void;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type GetMainWindowFn = () => any;
 
+/** Tell the renderer to play the notification sound via IPC. */
+function playNotificationSound(getMainWindow: GetMainWindowFn) {
+  getMainWindow()?.webContents.send("play-notification-sound");
+}
+
 /**
  * Process a decrypted (or plaintext legacy) message from a mobile client.
  * Handles file-start, file-chunk, file-end, clipboard, text, file, image, and default messages.
@@ -66,28 +71,59 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
 
   switch (msgType) {
     case "clipboard": {
-      const { clipboard } = require("electron");
-      clipboard.writeText(data.content);
+      // Incoming clipboard events are ALWAYS auto-copied regardless of the
+      // local clipboard-sync setting (the setting only controls OUTGOING).
       const { setLastClipboardText } = require("./clipboard-sync");
+      const { clipboard, Notification } = require("electron");
+      const settingsStore = require("./settings-store").default;
+
+      clipboard.writeText(data.content);
       setLastClipboardText(data.content);
-      console.log("[DEBUG] Received clipboard from mobile (encrypted)");
-      const { Notification } = require("electron");
-      if (Notification.isSupported()) {
+      console.log("[DEBUG] Received clipboard from mobile, auto-copied to clipboard");
+
+      // Show Windows notification (gated by notificationsEnabled setting)
+      const notificationsEnabled = settingsStore.get("notificationsEnabled", true) as boolean;
+      const soundOnMessage = settingsStore.get("soundOnMessage", true) as boolean;
+      if (notificationsEnabled && Notification.isSupported()) {
         new Notification({
           title: "Fast Share - Clipboard Sync",
           body:
             data.content.length > 100
               ? data.content.substring(0, 100) + "..."
               : data.content,
-          silent: false,
+          silent: true,
         }).show();
       }
+      if (soundOnMessage) {
+        playNotificationSound(getMainWindow);
+      }
+
       getMainWindow()?.webContents.send("ws-message", data);
       break;
     }
 
     case "text": {
       getMainWindow()?.webContents.send("ws-message", data);
+
+      // Show Windows notification for incoming text messages (gated by setting)
+      const { Notification: ElectronNotification } = require("electron");
+      const settingsStore = require("./settings-store").default;
+      const notificationsEnabled = settingsStore.get("notificationsEnabled", true) as boolean;
+      const soundOnMessage = settingsStore.get("soundOnMessage", true) as boolean;
+      if (notificationsEnabled && ElectronNotification.isSupported()) {
+        const text = typeof data.content === "string" ? data.content : "";
+        new ElectronNotification({
+          title: "Fast Share - New Message",
+          body:
+            text.length > 100
+              ? text.substring(0, 100) + "..."
+              : text,
+          silent: true,
+        }).show();
+      }
+      if (soundOnMessage) {
+        playNotificationSound(getMainWindow);
+      }
       break;
     }
 
