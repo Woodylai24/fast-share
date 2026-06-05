@@ -44,6 +44,13 @@ function createWindow() {
       mainWindow!.hide();
     }
   });
+
+  mainWindow.on("minimize", (event) => {
+    if (shouldMinimizeToTray()) {
+      event.preventDefault();
+      mainWindow!.hide();
+    }
+  });
 }
 
 app.whenReady().then(() => {

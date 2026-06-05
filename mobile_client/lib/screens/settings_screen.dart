@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:fast_share_mobile/ai_service.dart';
 import 'package:fast_share_mobile/services/settings_service.dart';
 import 'package:fast_share_mobile/services/theme_notifier.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 /// Full settings page with General, Appearance, Connection, Notifications,
 /// AI, and About sections.
@@ -143,23 +142,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // ── Notification helper ──────────────────────────────────────────────
 
   Future<void> _openNotificationSettings() async {
-    // Android app notification settings intent
-    final uri = Uri.parse(
-      'android-app://android.settings.APP_NOTIFICATION_SETTINGS'
-      '?android.provider.extra.APP_PACKAGE'
-      '=io.github.woodylai24.fastshare',
-    );
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
-    } else {
-      // Fallback: try the standard settings URI scheme
-      final fallback = Uri.parse(
-        'android.settings.ACTION_APPLICATION_DETAILS_SETTINGS'
-        '?package=io.github.woodylai24.fastshare',
-      );
-      if (await canLaunchUrl(fallback)) {
-        await launchUrl(fallback);
-      } else if (mounted) {
+    try {
+      const channel = MethodChannel('fast_share/settings');
+      await channel.invokeMethod('openNotificationSettings');
+    } on PlatformException catch (_) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Could not open notification settings'),
