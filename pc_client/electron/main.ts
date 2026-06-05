@@ -45,9 +45,8 @@ function createWindow() {
     }
   });
 
-  mainWindow.on("minimize", (event) => {
+  mainWindow.on("minimize", () => {
     if (shouldMinimizeToTray()) {
-      event.preventDefault();
       mainWindow!.hide();
     }
   });
