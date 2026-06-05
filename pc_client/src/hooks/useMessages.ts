@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { type Message, type StoredMessage, MessageType } from "../types";
 import { generateId, isImageFile } from "../utils";
 
@@ -38,11 +38,12 @@ const MessageStorage = {
   },
 };
 
-// Load initial messages once at module level (same as original)
-const initialMessages = MessageStorage.load();
+interface UseMessagesOptions {
+  messages: Message[];
+  setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+}
 
-export function useMessages() {
-  const [messages, setMessages] = useState<Message[]>(initialMessages);
+export function useMessages({ messages, setMessages }: UseMessagesOptions) {
   const [inputText, setInputText] = useState("");
   const messageListRef = useRef<HTMLDivElement>(null);
 
@@ -100,8 +101,6 @@ export function useMessages() {
   };
 
   return {
-    messages,
-    setMessages,
     inputText,
     setInputText,
     sendText,
