@@ -3,6 +3,11 @@ import path from "path";
 import settingsStore from "./settings-store";
 
 let tray: Tray | null = null;
+let isQuitting = false;
+
+export function shouldQuit(): boolean {
+  return isQuitting;
+}
 
 export function createTray(getMainWindowFn: () => BrowserWindow | null) {
   const iconPath = path.join(__dirname, "../public/icon.ico");
@@ -13,7 +18,7 @@ export function createTray(getMainWindowFn: () => BrowserWindow | null) {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: "Show Window",
+      label: "Open",
       click: () => {
         const win = getMainWindowFn();
         if (win) {
@@ -26,6 +31,7 @@ export function createTray(getMainWindowFn: () => BrowserWindow | null) {
     {
       label: "Quit",
       click: () => {
+        isQuitting = true;
         app.quit();
       },
     },
@@ -43,5 +49,5 @@ export function createTray(getMainWindowFn: () => BrowserWindow | null) {
 }
 
 export function shouldMinimizeToTray(): boolean {
-  return settingsStore.get("minimizeToTray", false) as boolean;
+  return !isQuitting && settingsStore.get("minimizeToTray", false) as boolean;
 }

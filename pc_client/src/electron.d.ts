@@ -46,6 +46,8 @@ export interface IElectronAPI {
   // General settings (theme, etc.)
   getSettings: () => Promise<{ theme?: string; [key: string]: unknown }>;
   saveSettings: (settings: { theme?: string; [key: string]: unknown }) => Promise<{ success: boolean }>;
+  onSettingsChanged: (callback: (settings: Record<string, unknown>) => void) => () => void;
+  onPlayNotificationSound: (callback: () => void) => () => void;
 }
 
 declare global {
