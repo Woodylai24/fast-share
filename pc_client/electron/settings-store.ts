@@ -9,6 +9,7 @@ const settingsStore = new ElectronStore({
     soundOnMessage: true,
     notificationsEnabled: true,
     theme: "system",
+    onboardingComplete: false,
   },
 });
 

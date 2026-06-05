@@ -7,6 +7,7 @@ import { ContextMenu } from "./components/ContextMenu";
 import { MessageBubble } from "./components/MessageBubble";
 import { QrCodeSection } from "./components/QrCode";
 import { FileInput } from "./components/FileInput";
+import { Onboarding } from "./Onboarding";
 import { useConnection } from "./hooks/useConnection";
 import { useMessages } from "./hooks/useMessages";
 import { type Message } from "./types";
@@ -14,6 +15,7 @@ import "./App.css";
 
 function App() {
   const [showSettings, setShowSettings] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [summaryPopup, setSummaryPopup] = useState<{
     isOpen: boolean;
     message: Message | null;
@@ -86,6 +88,27 @@ function App() {
   useEffect(() => {
     checkApiKey();
   }, [checkApiKey]);
+
+  // Check onboarding status
+  const checkOnboarding = useCallback(async () => {
+    try {
+      const settings = await window.electronAPI.getSettings();
+      if (!settings.onboardingComplete) {
+        setShowOnboarding(true);
+      }
+    } catch {
+      // default: don't show
+    }
+  }, []);
+
+  useEffect(() => {
+    checkOnboarding();
+  }, [checkOnboarding]);
+
+  const handleOnboardingComplete = useCallback(async () => {
+    setShowOnboarding(false);
+    await window.electronAPI.saveSettings({ onboardingComplete: true });
+  }, []);
 
   // File handling
   const handleBrowseFiles = async () => {
@@ -176,6 +199,7 @@ function App() {
 
   return (
     <ThemeProvider>
+      {showOnboarding && <Onboarding onComplete={handleOnboardingComplete} />}
       <TitleBar onSettingsClick={() => setShowSettings(true)} />
       <div
         className={`container ${isDragging ? "dragging" : ""}`}

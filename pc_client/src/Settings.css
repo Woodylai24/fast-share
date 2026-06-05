@@ -415,6 +415,22 @@
 }
 
 /* ─── About ─── */
+.settings-replay-btn {
+  width: 100%;
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--border-secondary);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.settings-replay-btn:hover {
+  background: var(--bg-hover);
+}
+
 .settings-version {
   font-size: 13px;
   font-weight: 500;

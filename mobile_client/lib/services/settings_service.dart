@@ -8,6 +8,7 @@ class SettingsService {
   static const String _autoReconnectKey = 'auto_reconnect';
   static const String _clipboardSyncKey = 'clipboard_sync';
   static const String _themeKey = 'theme';
+  static const String _onboardingCompleteKey = 'onboarding_complete';
 
   // Default values
   static const bool _defaultStartupOnBoot = false;
@@ -15,6 +16,7 @@ class SettingsService {
   static const bool _defaultAutoReconnect = true;
   static const String _defaultClipboardSync = 'auto-message';
   static const String _defaultTheme = 'system';
+  static const bool _defaultOnboardingComplete = false;
 
   static Future<SharedPreferences> get _prefs async {
     return await SharedPreferences.getInstance();
@@ -99,6 +101,20 @@ class SettingsService {
     await prefs.setString(_themeKey, value);
   }
 
+  // --- onboardingComplete ---
+
+  /// Whether the user has completed the onboarding flow.
+  static Future<bool> getOnboardingComplete() async {
+    final prefs = await _prefs;
+    return prefs.getBool(_onboardingCompleteKey) ?? _defaultOnboardingComplete;
+  }
+
+  /// Mark onboarding as complete.
+  static Future<void> setOnboardingComplete(bool value) async {
+    final prefs = await _prefs;
+    await prefs.setBool(_onboardingCompleteKey, value);
+  }
+
   // --- Reset ---
 
   /// Reset all settings to their default values.
@@ -109,5 +125,6 @@ class SettingsService {
     await prefs.remove(_autoReconnectKey);
     await prefs.remove(_clipboardSyncKey);
     await prefs.remove(_themeKey);
+    await prefs.remove(_onboardingCompleteKey);
   }
 }

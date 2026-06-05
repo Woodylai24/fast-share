@@ -519,6 +519,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 // ═══════════════════════════════════════════════════════════
                 _SectionHeader(title: 'About', icon: Icons.info_outline),
                 ListTile(
+                  leading: const Icon(Icons.replay),
+                  title: const Text('Reset onboarding'),
+                  subtitle: const Text('Show the onboarding flow again on next launch'),
+                  onTap: () async {
+                    await SettingsService.setOnboardingComplete(false);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Onboarding will show on next app launch'),
+                        ),
+                      );
+                    }
+                  },
+                ),
+                ListTile(
                   leading: const Icon(Icons.new_releases_outlined),
                   title: const Text('Version'),
                   subtitle: const Text('1.0.0'),
