@@ -44,7 +44,7 @@ function App() {
     clearHistory,
     addSentFileMessage,
     messageListRef,
-  } = useMessages();
+  } = useMessages({ messages, setMessages });
 
   // Check API key
   const checkApiKey = useCallback(async () => {
