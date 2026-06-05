@@ -70,13 +70,15 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
       // local clipboard-sync setting (the setting only controls OUTGOING).
       const { setLastClipboardText } = require("./clipboard-sync");
       const { clipboard, Notification } = require("electron");
+      const settingsStore = require("./settings-store").default;
 
       clipboard.writeText(data.content);
       setLastClipboardText(data.content);
       console.log("[DEBUG] Received clipboard from mobile, auto-copied to clipboard");
 
-      // Show Windows notification
-      if (Notification.isSupported()) {
+      // Show Windows notification (gated by notificationsEnabled setting)
+      const notificationsEnabled = settingsStore.get("notificationsEnabled", true) as boolean;
+      if (notificationsEnabled && Notification.isSupported()) {
         new Notification({
           title: "Fast Share - Clipboard Sync",
           body:
@@ -93,6 +95,22 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
 
     case "text": {
       getMainWindow()?.webContents.send("ws-message", data);
+
+      // Show Windows notification for incoming text messages (gated by setting)
+      const { Notification: ElectronNotification } = require("electron");
+      const settingsStore = require("./settings-store").default;
+      const notificationsEnabled = settingsStore.get("notificationsEnabled", true) as boolean;
+      if (notificationsEnabled && ElectronNotification.isSupported()) {
+        const text = typeof data.content === "string" ? data.content : "";
+        new ElectronNotification({
+          title: "Fast Share - New Message",
+          body:
+            text.length > 100
+              ? text.substring(0, 100) + "..."
+              : text,
+          silent: false,
+        }).show();
+      }
       break;
     }
 
