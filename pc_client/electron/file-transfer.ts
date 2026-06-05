@@ -83,8 +83,8 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
 
       // Show Windows notification (gated by notificationsEnabled setting)
       const notificationsEnabled = settingsStore.get("notificationsEnabled", true) as boolean;
+      const soundOnMessage = settingsStore.get("soundOnMessage", true) as boolean;
       if (notificationsEnabled && Notification.isSupported()) {
-        const soundOnMessage = settingsStore.get("soundOnMessage", true) as boolean;
         new Notification({
           title: "Fast Share - Clipboard Sync",
           body:
@@ -93,9 +93,9 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
               : data.content,
           silent: true,
         }).show();
-        if (soundOnMessage) {
-          playNotificationSound(getMainWindow);
-        }
+      }
+      if (soundOnMessage) {
+        playNotificationSound(getMainWindow);
       }
 
       getMainWindow()?.webContents.send("ws-message", data);
@@ -109,9 +109,9 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
       const { Notification: ElectronNotification } = require("electron");
       const settingsStore = require("./settings-store").default;
       const notificationsEnabled = settingsStore.get("notificationsEnabled", true) as boolean;
+      const soundOnMessage = settingsStore.get("soundOnMessage", true) as boolean;
       if (notificationsEnabled && ElectronNotification.isSupported()) {
         const text = typeof data.content === "string" ? data.content : "";
-        const soundOnMessage = settingsStore.get("soundOnMessage", true) as boolean;
         new ElectronNotification({
           title: "Fast Share - New Message",
           body:
@@ -120,9 +120,9 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
               : text,
           silent: true,
         }).show();
-        if (soundOnMessage) {
-          playNotificationSound(getMainWindow);
-        }
+      }
+      if (soundOnMessage) {
+        playNotificationSound(getMainWindow);
       }
       break;
     }
