@@ -2,7 +2,7 @@ import { clipboard } from "electron";
 import settingsStore from "./settings-store";
 
 // --- Clipboard Sync ---
-type ClipboardSyncMode = "none" | "notify" | "auto";
+type ClipboardSyncMode = "none" | "auto-message" | "auto-sync";
 
 let lastClipboardText = clipboard.readText();
 let clipboardInterval: ReturnType<typeof setInterval> | null = null;
@@ -10,7 +10,7 @@ let clipboardInterval: ReturnType<typeof setInterval> | null = null;
 type SendFn = (message: object) => void;
 
 function getClipboardSyncMode(): ClipboardSyncMode {
-  return settingsStore.get("clipboardSync", "notify") as ClipboardSyncMode;
+  return settingsStore.get("clipboardSync", "auto-message") as ClipboardSyncMode;
 }
 
 function startClipboardSync(sendFn: SendFn) {
@@ -27,10 +27,10 @@ function startClipboardSync(sendFn: SendFn) {
     const currentText = clipboard.readText();
     if (currentText && currentText !== lastClipboardText) {
       lastClipboardText = currentText;
-      if (mode === "auto") {
+      if (mode === "auto-sync") {
         sendFn({ type: "clipboard", content: currentText });
       } else {
-        // 'notify' mode — send as regular text message
+        // 'auto-message' mode — send as regular text message
         sendFn({ type: "text", content: currentText });
       }
       console.log(

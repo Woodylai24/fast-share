@@ -745,11 +745,11 @@ class ChatNotifier extends ChangeNotifier {
           debugPrint(
             '[DEBUG] Clipboard changed while in background, sending to PC',
           );
-          if (clipboardSync == 'notify') {
-            // Send as regular text message
+          if (clipboardSync == 'auto-message') {
+            // 'auto-message' — send as regular text message
             _sendJson({'type': 'text', 'content': currentClipboard});
           } else {
-            // 'auto' — send as clipboard sync
+            // 'auto-sync' — send as clipboard sync
             _sendJson({'type': 'clipboard', 'content': currentClipboard});
           }
           _lastClipboardText = currentClipboard;
