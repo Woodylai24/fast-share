@@ -14,6 +14,7 @@ interface IncomingFileTransfer {
   mimeType: string;
   chunks: Buffer[];
   receivedBytes: number;
+  lastNotifiedPct: number;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -141,6 +142,7 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
         mimeType: data.mimeType || "application/octet-stream",
         chunks: [],
         receivedBytes: 0,
+        lastNotifiedPct: -1,
         timer: setTimeout(() => {
           console.error(
             `[DEBUG] File chunk reassembly timeout for ${clientInfo.incomingFile?.filename}`,
@@ -148,6 +150,13 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
           cleanupFileReassembly(clientInfo);
         }, CHUNK_REASSEMBLY_TIMEOUT_MS),
       };
+
+      // Notify renderer that a file transfer is starting (create placeholder)
+      getMainWindow()?.webContents.send("file-received-start", {
+        filename: data.filename,
+        fileSize: data.fileSize,
+        mimeType: data.mimeType || "application/octet-stream",
+      });
       break;
     }
 
@@ -159,6 +168,23 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
       const chunkData = Buffer.from(data.data, "base64");
       clientInfo.incomingFile.chunks.push(chunkData);
       clientInfo.incomingFile.receivedBytes += chunkData.length;
+
+      // Throttled progress update: notify every ~5% change
+      const totalBytes = clientInfo.incomingFile.fileSize;
+      if (totalBytes > 0) {
+        const currentPct = Math.floor(
+          (clientInfo.incomingFile.receivedBytes / totalBytes) * 100,
+        );
+        if (currentPct - clientInfo.incomingFile.lastNotifiedPct >= 5) {
+          clientInfo.incomingFile.lastNotifiedPct = currentPct;
+          getMainWindow()?.webContents.send("file-progress", {
+            filename: clientInfo.incomingFile.filename,
+            receivedBytes: clientInfo.incomingFile.receivedBytes,
+            totalBytes,
+            direction: "receive",
+          });
+        }
+      }
 
       // Reset the reassembly timer on each chunk
       clearTimeout(clientInfo.incomingFile.timer);
@@ -188,6 +214,14 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
         console.error(
           `[DEBUG] File checksum mismatch for ${fileTransfer.filename}: expected ${data.checksum}, got ${checksum}`,
         );
+        // Notify renderer of failure
+        getMainWindow()?.webContents.send("file-progress", {
+          filename: fileTransfer.filename,
+          receivedBytes: fileTransfer.receivedBytes,
+          totalBytes: fileTransfer.fileSize,
+          direction: "receive",
+          failed: true,
+        });
         clientInfo.incomingFile = undefined;
         return;
       }
@@ -228,12 +262,19 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
  * Send a file via encrypted chunked WebSocket transfer.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function sendFileEncrypted(client: any, filePath: string, fileName: string, messageType: string, sendEncrypted: SendEncryptedFn) {
+function sendFileEncrypted(client: any, filePath: string, fileName: string, messageType: string, sendEncrypted: SendEncryptedFn, getMainWindow: GetMainWindowFn) {
   try {
     const fileBuffer = fs.readFileSync(filePath);
     const fileSize = fileBuffer.length;
     const mimeType = getMimeType(fileName);
     const checksum = CryptoManager.sha256(fileBuffer);
+
+    // Notify renderer that a file send is starting
+    getMainWindow()?.webContents.send("file-sent-start", {
+      filename: fileName,
+      fileSize,
+      mimeType,
+    });
 
     // Send file-start
     sendEncrypted(client, {
@@ -243,9 +284,10 @@ function sendFileEncrypted(client: any, filePath: string, fileName: string, mess
       mimeType,
     });
 
-    // Send file-chunks
+    // Send file-chunks with progress
     let offset = 0;
     let seq = 0;
+    let lastNotifiedPct = -1;
     while (offset < fileSize) {
       const end = Math.min(offset + FILE_CHUNK_SIZE, fileSize);
       const chunk = fileBuffer.subarray(offset, end);
@@ -256,6 +298,18 @@ function sendFileEncrypted(client: any, filePath: string, fileName: string, mess
       });
       offset = end;
       seq++;
+
+      // Throttled progress update: notify every ~5% change
+      const currentPct = Math.floor((offset / fileSize) * 100);
+      if (currentPct - lastNotifiedPct >= 5 || offset >= fileSize) {
+        lastNotifiedPct = currentPct;
+        getMainWindow()?.webContents.send("file-progress", {
+          filename: fileName,
+          receivedBytes: offset,
+          totalBytes: fileSize,
+          direction: "send",
+        });
+      }
     }
 
     // Send file-end
@@ -265,11 +319,21 @@ function sendFileEncrypted(client: any, filePath: string, fileName: string, mess
       checksum,
     });
 
+    // Notify renderer that send is complete
+    getMainWindow()?.webContents.send("file-sent-complete", {
+      filename: fileName,
+    });
+
     console.log(
       `[DEBUG] File sent via encrypted WS: ${fileName} (${fileSize} bytes, ${seq} chunks)`,
     );
   } catch (error) {
     console.error(`[DEBUG] Failed to send file via encrypted WS: ${error}`);
+    // Notify renderer of failure
+    getMainWindow()?.webContents.send("file-sent-complete", {
+      filename: fileName,
+      failed: true,
+    });
   }
 }
 

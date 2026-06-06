@@ -30,6 +30,7 @@ interface ClientInfo {
     mimeType: string;
     chunks: Buffer[];
     receivedBytes: number;
+    lastNotifiedPct: number;
     timer: ReturnType<typeof setTimeout>;
   };
 }

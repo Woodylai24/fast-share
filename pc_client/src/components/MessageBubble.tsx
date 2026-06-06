@@ -1,5 +1,5 @@
 import Linkify from "react-linkify";
-import { type Message, MessageType } from "../types";
+import { type Message, MessageType, type TransferState } from "../types";
 import { formatTime, formatDate } from "../utils";
 
 interface MessageBubbleProps {
@@ -7,6 +7,46 @@ interface MessageBubbleProps {
   onContextMenu: (e: React.MouseEvent, message: Message) => void;
   onClick: (message: Message) => void;
   previousMessage?: Message;
+}
+
+function isTransferring(state?: TransferState): boolean {
+  return state === "pending" || state === "transferring";
+}
+
+function TransferProgressBar({ message }: { message: Message }) {
+  const { transferState, transferProgress = 0 } = message;
+  const isSending = message.sender === "Me";
+  const percent = Math.round(transferProgress);
+
+  if (transferState === "failed") {
+    return (
+      <div className="transfer-failed">
+        <span className="transfer-failed-icon">✕</span>
+        <span>Transfer failed</span>
+      </div>
+    );
+  }
+
+  const label =
+    transferState === "pending"
+      ? isSending
+        ? "Preparing..."
+        : "Waiting..."
+      : isSending
+        ? `Sending... ${percent}%`
+        : `Receiving... ${percent}%`;
+
+  return (
+    <div className="transfer-progress">
+      <div className="transfer-progress-label">{label}</div>
+      <div className="transfer-progress-bar-track">
+        <div
+          className="transfer-progress-bar-fill"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+    </div>
+  );
 }
 
 export function MessageBubble({
@@ -45,22 +85,47 @@ export function MessageBubble({
       case MessageType.IMAGE:
         return (
           <div className="message-image">
-            <img
-              src={message.url}
-              alt={message.filename || "Image"}
-              onClick={(e) => {
-                e.stopPropagation();
-                onClick(message);
-              }}
-              onError={(e) => {
-                const target = e.target as HTMLImageElement;
-                target.style.display = "none";
-                target.parentElement!.innerHTML =
-                  '<div class="image-error"><span>📷</span><span>Image not available</span></div>';
-              }}
-            />
-            {message.filename && (
-              <span className="message-filename">{message.filename}</span>
+            {isTransferring(message.transferState) ||
+            message.transferState === "failed" ? (
+              // Show filename + progress while transferring
+              <>
+                <div className="message-file">
+                  <div className="file-icon">📷</div>
+                  <div className="file-info">
+                    <span className="file-name">
+                      {message.filename || "Image"}
+                    </span>
+                  </div>
+                </div>
+                <TransferProgressBar message={message} />
+              </>
+            ) : (
+              <>
+                <img
+                  src={message.url}
+                  alt={message.filename || "Image"}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onClick(message);
+                  }}
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    target.style.display = "none";
+                    target.parentElement!.innerHTML =
+                      '<div class="image-error"><span>📷</span><span>Image not available</span></div>';
+                  }}
+                />
+                {message.filename && (
+                  <span className="message-filename">
+                    {message.filename}
+                  </span>
+                )}
+                {message.transferState === "complete" && (
+                  <div className="transfer-complete-label">
+                    Received ✓
+                  </div>
+                )}
+              </>
             )}
           </div>
         );
@@ -69,14 +134,25 @@ export function MessageBubble({
           <div
             className="message-file"
             onClick={(e) => {
-              e.stopPropagation();
-              onClick(message);
+              if (!isTransferring(message.transferState)) {
+                e.stopPropagation();
+                onClick(message);
+              }
             }}
           >
             <div className="file-icon">📄</div>
             <div className="file-info">
               <span className="file-name">{message.filename || "File"}</span>
-              <span className="file-action">Click to download</span>
+              {isTransferring(message.transferState) ||
+              message.transferState === "failed" ? (
+                <TransferProgressBar message={message} />
+              ) : message.transferState === "complete" ? (
+                <span className="file-action">
+                  {isMe ? "Sent ✓" : "Received ✓"} — Click to open
+                </span>
+              ) : (
+                <span className="file-action">Click to download</span>
+              )}
             </div>
           </div>
         );

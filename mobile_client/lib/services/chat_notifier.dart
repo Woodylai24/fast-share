@@ -23,6 +23,7 @@ class _IncomingFileTransfer {
   final List<Uint8List> chunks = [];
   int receivedBytes = 0;
   Timer? _timer;
+  String? messageId; // ID of the placeholder Message in the message list
 
   _IncomingFileTransfer({
     required this.filename,
@@ -93,6 +94,9 @@ class ChatNotifier extends ChangeNotifier {
 
   // File transfer
   _IncomingFileTransfer? _incomingFile;
+
+  // Progress throttle — last notified progress percentage (0-100)
+  int _lastNotifiedProgress = -1;
 
   // Scroll control (exposed for the widget to use)
   final ScrollController scrollController = ScrollController();
@@ -488,6 +492,20 @@ class ChatNotifier extends ChangeNotifier {
     return val;
   }
 
+  // ─── Helper: update a message in-place by ID ────────────────────────
+
+  /// Find a message by ID in _messages and replace it with [updated].
+  /// Returns true if found.
+  bool _updateMessageById(String id, Message updated) {
+    for (int i = 0; i < _messages.length; i++) {
+      if (_messages[i].id == id) {
+        _messages[i] = updated;
+        return true;
+      }
+    }
+    return false;
+  }
+
   // ─── File transfer ──────────────────────────────────────────────────
 
   void _handleFileStart(Map<String, dynamic> data) {
@@ -500,6 +518,26 @@ class ChatNotifier extends ChangeNotifier {
       fileSize: data['fileSize'] as int,
       mimeType: data['mimeType'] as String? ?? 'application/octet-stream',
     );
+
+    // Create a placeholder message immediately for progress UI
+    final filename = _incomingFile!.filename;
+    final isImage = RegExp(
+      r'\.(jpg|jpeg|png|gif|webp|bmp)$',
+      caseSensitive: false,
+    ).hasMatch(filename);
+
+    final placeholder = Message.transferPlaceholder(
+      filename: filename,
+      sender: 'PC',
+      type: isImage ? MessageType.image : MessageType.file,
+      transferState: TransferState.pending,
+      transferProgress: 0.0,
+    );
+    _incomingFile!.messageId = placeholder.id;
+    _messages.add(placeholder);
+    _lastNotifiedProgress = 0;
+    notifyListeners();
+    _scrollToBottom();
   }
 
   void _handleFileChunk(Map<String, dynamic> data) {
@@ -511,6 +549,26 @@ class ChatNotifier extends ChangeNotifier {
     _incomingFile!.chunks.add(chunkData);
     _incomingFile!.receivedBytes += chunkData.length;
     _incomingFile!._resetTimer();
+
+    // Throttled progress update: notify only every 5% change
+    final progress = _incomingFile!.fileSize > 0
+        ? _incomingFile!.receivedBytes / _incomingFile!.fileSize
+        : 0.0;
+    final currentPct = (progress * 100).toInt();
+    if (currentPct - _lastNotifiedProgress >= 5) {
+      _lastNotifiedProgress = currentPct;
+      final msgId = _incomingFile!.messageId;
+      if (msgId != null) {
+        final idx = _messages.indexWhere((m) => m.id == msgId);
+        if (idx >= 0) {
+          _messages[idx] = _messages[idx].copyWith(
+            transferState: TransferState.transferring,
+            transferProgress: progress,
+          );
+          notifyListeners();
+        }
+      }
+    }
   }
 
   Future<void> _handleFileEnd(Map<String, dynamic> data) async {
@@ -533,6 +591,17 @@ class ChatNotifier extends ChangeNotifier {
       debugPrint(
         '[DEBUG] File checksum mismatch: expected ${data['checksum']}, got $checksum',
       );
+      // Mark the placeholder as failed
+      final msgId = transfer.messageId;
+      if (msgId != null) {
+        _updateMessageById(
+          msgId,
+          _messages.firstWhere((m) => m.id == msgId).copyWith(
+            transferState: TransferState.failed,
+          ),
+        );
+        notifyListeners();
+      }
       return;
     }
 
@@ -559,10 +628,32 @@ class ChatNotifier extends ChangeNotifier {
     }
 
     if (!_isDisconnected) {
-      if (isImage) {
-        _messages.add(Message.image(filename: filename, url: fileUrl, sender: 'PC'));
+      // Update the placeholder message to complete with the actual URL
+      final msgId = transfer.messageId;
+      if (msgId != null) {
+        final updated = _updateMessageById(
+          msgId,
+          _messages.firstWhere((m) => m.id == msgId).copyWith(
+            transferState: TransferState.complete,
+            transferProgress: 1.0,
+            url: fileUrl,
+          ),
+        );
+        if (!updated) {
+          // Fallback: add a new message if placeholder was removed
+          if (isImage) {
+            _messages.add(Message.image(filename: filename, url: fileUrl, sender: 'PC'));
+          } else {
+            _messages.add(Message.file(filename: filename, url: fileUrl, sender: 'PC'));
+          }
+        }
       } else {
-        _messages.add(Message.file(filename: filename, url: fileUrl, sender: 'PC'));
+        // No placeholder — add a new message (legacy path)
+        if (isImage) {
+          _messages.add(Message.image(filename: filename, url: fileUrl, sender: 'PC'));
+        } else {
+          _messages.add(Message.file(filename: filename, url: fileUrl, sender: 'PC'));
+        }
       }
       notifyListeners();
       _saveMessages();
@@ -628,12 +719,41 @@ class ChatNotifier extends ChangeNotifier {
       return;
     }
 
+    // Determine message type (image vs file)
+    final isImage = RegExp(
+      r'\.(jpg|jpeg|png|gif|webp|bmp)$',
+      caseSensitive: false,
+    ).hasMatch(filename);
+
+    // Create a placeholder message for the outgoing transfer
+    final placeholder = Message.transferPlaceholder(
+      filename: filename,
+      sender: 'Me',
+      type: isImage ? MessageType.image : MessageType.file,
+      transferState: TransferState.pending,
+      transferProgress: 0.0,
+    );
+    _messages.add(placeholder);
+    _lastNotifiedProgress = 0;
+    notifyListeners();
+    _scrollToBottom();
+
     try {
       final file = File(filePath);
       final fileBytes = await file.readAsBytes();
       final fileSize = fileBytes.length;
       final mimeType = _getMimeType(filename);
       final checksum = await CryptoService.sha256(fileBytes);
+
+      // Update to transferring state
+      _updateMessageById(
+        placeholder.id,
+        placeholder.copyWith(
+          transferState: TransferState.transferring,
+          transferProgress: 0.0,
+        ),
+      );
+      notifyListeners();
 
       _sendEncrypted({
         'type': 'file-start',
@@ -655,6 +775,22 @@ class ChatNotifier extends ChangeNotifier {
         });
         offset = end;
         seq++;
+
+        // Throttled progress update every ~5% or every 10 chunks
+        if (fileSize > 0 && (seq % 10 == 0 || offset >= fileSize)) {
+          final progress = offset / fileSize;
+          final currentPct = (progress * 100).toInt();
+          if (currentPct - _lastNotifiedProgress >= 5 || offset >= fileSize) {
+            _lastNotifiedProgress = currentPct;
+            _updateMessageById(
+              placeholder.id,
+              _messages.firstWhere((m) => m.id == placeholder.id).copyWith(
+                transferProgress: progress,
+              ),
+            );
+            notifyListeners();
+          }
+        }
       }
 
       _sendEncrypted({
@@ -663,6 +799,19 @@ class ChatNotifier extends ChangeNotifier {
         'checksum': checksum,
       });
 
+      // Mark as complete
+      _updateMessageById(
+        placeholder.id,
+        _messages.firstWhere((m) => m.id == placeholder.id).copyWith(
+          transferState: TransferState.complete,
+          transferProgress: 1.0,
+        ),
+      );
+      _lastNotifiedProgress = -1;
+      notifyListeners();
+      _saveMessages();
+      _scrollToBottom();
+
       debugPrint(
         '[DEBUG] File sent via encrypted WS: $filename ($fileSize bytes, $seq chunks)',
       );
@@ -670,6 +819,14 @@ class ChatNotifier extends ChangeNotifier {
       debugPrint(
         '[DEBUG] Failed to send file via WS, falling back to HTTP: $e',
       );
+      // Mark the placeholder as failed, then fall back to HTTP
+      _updateMessageById(
+        placeholder.id,
+        _messages.firstWhere((m) => m.id == placeholder.id).copyWith(
+          transferState: TransferState.failed,
+        ),
+      );
+      notifyListeners();
       await _uploadFileViaHttp(filePath, filename);
     }
   }

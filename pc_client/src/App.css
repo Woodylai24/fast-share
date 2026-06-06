@@ -268,6 +268,54 @@
   color: var(--text-secondary);
 }
 
+/* File transfer progress */
+.transfer-progress {
+  margin-top: 0.375rem;
+  width: 100%;
+  min-width: 140px;
+}
+
+.transfer-progress-label {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.25rem;
+}
+
+.transfer-progress-bar-track {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.transfer-progress-bar-fill {
+  height: 100%;
+  background: var(--accent-primary, #6c8cff);
+  border-radius: 2px;
+  transition: width 0.15s ease-out;
+  min-width: 2px;
+}
+
+.transfer-failed {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-top: 0.25rem;
+  font-size: 0.7rem;
+  color: #ff6b6b;
+}
+
+.transfer-failed-icon {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.transfer-complete-label {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 0.125rem;
+}
+
 /* Context menu */
 .context-menu {
   position: fixed;

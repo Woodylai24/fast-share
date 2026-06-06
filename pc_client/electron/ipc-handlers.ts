@@ -210,7 +210,7 @@ function registerIpcHandlers(
         client.keyExchangeComplete
       ) {
         // Send file via encrypted chunked WS transfer
-        sendFileEncrypted(client, destPath, fileName, messageType, sendEncrypted);
+        sendFileEncrypted(client, destPath, fileName, messageType, sendEncrypted, getMainWindow);
         sentViaWs = true;
       }
     });

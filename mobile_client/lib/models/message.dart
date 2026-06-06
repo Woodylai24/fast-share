@@ -1,6 +1,9 @@
 /// Message types enum
 enum MessageType { text, file, image }
 
+/// Transfer state for file/image messages
+enum TransferState { pending, transferring, complete, failed }
+
 /// Message model class
 class Message {
   final String id;
@@ -11,6 +14,10 @@ class Message {
   final String? filename;
   final DateTime timestamp;
 
+  // Transfer progress fields
+  final TransferState? transferState;
+  final double transferProgress; // 0.0 to 1.0
+
   Message({
     String? id,
     required this.type,
@@ -19,6 +26,8 @@ class Message {
     required this.sender,
     this.filename,
     DateTime? timestamp,
+    this.transferState,
+    this.transferProgress = 0.0,
   }) : id =
            id ??
            '${DateTime.now().millisecondsSinceEpoch}-${DateTime.now().microsecond}',
@@ -64,6 +73,49 @@ class Message {
     return Message(type: MessageType.text, content: content, sender: 'System');
   }
 
+  /// Create a placeholder message for an in-progress file transfer
+  factory Message.transferPlaceholder({
+    required String filename,
+    required String sender,
+    required MessageType type,
+    TransferState transferState = TransferState.pending,
+    double transferProgress = 0.0,
+  }) {
+    return Message(
+      type: type,
+      content: filename,
+      filename: filename,
+      sender: sender,
+      transferState: transferState,
+      transferProgress: transferProgress,
+    );
+  }
+
+  /// Create a copy with updated fields (used for progress updates)
+  Message copyWith({
+    String? id,
+    MessageType? type,
+    String? content,
+    String? url,
+    String? sender,
+    String? filename,
+    DateTime? timestamp,
+    TransferState? transferState,
+    double? transferProgress,
+  }) {
+    return Message(
+      id: id ?? this.id,
+      type: type ?? this.type,
+      content: content ?? this.content,
+      url: url ?? this.url,
+      sender: sender ?? this.sender,
+      filename: filename ?? this.filename,
+      timestamp: timestamp ?? this.timestamp,
+      transferState: transferState ?? this.transferState,
+      transferProgress: transferProgress ?? this.transferProgress,
+    );
+  }
+
   /// Convert to JSON for persistence
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -73,6 +125,8 @@ class Message {
     'sender': sender,
     'filename': filename,
     'timestamp': timestamp.toIso8601String(),
+    // Don't persist transfer state — completed transfers have null state
+    // and in-progress transfers shouldn't be persisted mid-way
   };
 
   /// Create from JSON
@@ -93,4 +147,12 @@ class Message {
   bool get isMe => sender == 'Me';
   bool get isPC => sender == 'PC';
   bool get isSystem => sender == 'System';
+
+  /// Whether this message is currently being transferred
+  bool get isTransferring =>
+      transferState == TransferState.transferring ||
+      transferState == TransferState.pending;
+
+  /// Whether this message had a failed transfer
+  bool get isTransferFailed => transferState == TransferState.failed;
 }

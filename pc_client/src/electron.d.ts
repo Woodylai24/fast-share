@@ -31,6 +31,18 @@ export interface IElectronAPI {
   onFileReceived: (
     callback: (file: { filename: string; path: string }) => void,
   ) => () => void;
+  onFileReceivedStart: (
+    callback: (data: { filename: string; fileSize: number; mimeType: string }) => void,
+  ) => () => void;
+  onFileProgress: (
+    callback: (data: { filename: string; receivedBytes: number; totalBytes: number; direction: string; failed?: boolean }) => void,
+  ) => () => void;
+  onFileSentStart: (
+    callback: (data: { filename: string; fileSize: number; mimeType: string }) => void,
+  ) => () => void;
+  onFileSentComplete: (
+    callback: (data: { filename: string; failed?: boolean }) => void,
+  ) => () => void;
   getPathForFile: (file: File) => string;
   // AI Settings
   getAISettings: () => Promise<{ apiKey: string | null; provider: string; model: string }>;

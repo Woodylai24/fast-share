@@ -58,6 +58,16 @@ class MessageBubble extends StatelessWidget {
     return true;
   }
 
+  /// Whether this message bubble should show a progress indicator
+  bool get _isTransferring {
+    final state = message.transferState;
+    return state == TransferState.pending ||
+        state == TransferState.transferring;
+  }
+
+  /// Whether this transfer failed
+  bool get _isTransferFailed => message.transferState == TransferState.failed;
+
   @override
   Widget build(BuildContext context) {
     // System messages are centered
@@ -212,6 +222,95 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
+  /// Build a progress overlay widget for file/image transfers
+  Widget _buildProgressOverlay(bool isMe) {
+    if (!_isTransferring && !_isTransferFailed) return const SizedBox.shrink();
+
+    final progress = message.transferProgress;
+    final percent = (progress * 100).toInt();
+    final state = message.transferState;
+
+    // Failed state
+    if (_isTransferFailed) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+        decoration: BoxDecoration(
+          color: Colors.red.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, color: Colors.red[400], size: 16),
+            const SizedBox(width: 6),
+            Text(
+              'Transfer failed',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.red[400],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Pending / transferring state
+    final isSending = message.isMe;
+    final label = state == TransferState.pending
+        ? (isSending ? 'Preparing...' : 'Waiting...')
+        : (isSending ? 'Sending... $percent%' : 'Receiving... $percent%');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (state == TransferState.pending)
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: isMe ? Colors.blue[300] : Colors.grey[500],
+                ),
+              )
+            else
+              Icon(
+                isSending ? Icons.upload : Icons.download,
+                size: 14,
+                color: isMe ? Colors.blue[300] : Colors.grey[500],
+              ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: isMe ? Colors.blue[300] : Colors.grey[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: state == TransferState.pending ? null : progress,
+            minHeight: 4,
+            backgroundColor: isMe ? Colors.blue[100] : Colors.grey[300],
+            valueColor: AlwaysStoppedAnimation<Color>(
+              isMe ? Colors.blue[400]! : Colors.grey[600]!,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildFileBubble(BuildContext context, bool isMe) {
     final iconData = _getFileIcon(message.filename ?? '');
     final iconColor = _getFileIconColor(message.filename ?? '');
@@ -226,46 +325,113 @@ class MessageBubble extends StatelessWidget {
           width: 1,
         ),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: iconColor.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(iconData, color: iconColor, size: 32),
-          ),
-          const SizedBox(width: 12),
-          Flexible(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  message.filename ?? 'Unknown file',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w500,
-                    fontSize: 14,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: iconColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Tap to download',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                child: Icon(iconData, color: iconColor, size: 32),
+              ),
+              const SizedBox(width: 12),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      message.filename ?? 'Unknown file',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w500,
+                        fontSize: 14,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _isTransferring || _isTransferFailed
+                          ? ''
+                          : 'Tap to download',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
+          // Progress indicator for file transfers
+          if (_isTransferring || _isTransferFailed) ...[
+            const SizedBox(height: 8),
+            _buildProgressOverlay(isMe),
+          ],
         ],
       ),
     );
   }
 
   Widget _buildImageBubble(BuildContext context, bool isMe) {
+    // If still transferring, show a placeholder with progress
+    if (_isTransferring || _isTransferFailed) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: isMe ? Colors.blue[50] : Colors.grey[100],
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isMe ? Colors.blue[200]! : Colors.grey[300]!,
+            width: 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.image, color: Colors.grey, size: 32),
+                ),
+                const SizedBox(width: 12),
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        message.filename ?? 'Image',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w500,
+                          fontSize: 14,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            _buildProgressOverlay(isMe),
+          ],
+        ),
+      );
+    }
+
     final String? url = message.url;
 
     // Handle local file:// URLs vs remote http:// URLs
