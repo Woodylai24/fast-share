@@ -122,7 +122,7 @@ export function MessageBubble({
                 )}
                 {message.transferState === "complete" && (
                   <div className="transfer-complete-label">
-                    Received ✓
+                    {isMe ? "Sent" : "Received"}
                   </div>
                 )}
               </>
@@ -148,7 +148,7 @@ export function MessageBubble({
                 <TransferProgressBar message={message} />
               ) : message.transferState === "complete" ? (
                 <span className="file-action">
-                  {isMe ? "Sent ✓" : "Received ✓"} — Click to open
+                  {isMe ? "Sent" : "Received"} — Click to open
                 </span>
               ) : (
                 <span className="file-action">Click to download</span>

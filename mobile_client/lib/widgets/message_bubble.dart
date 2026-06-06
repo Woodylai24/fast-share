@@ -195,17 +195,20 @@ class MessageBubble extends StatelessWidget {
   }
 
   Widget _buildTextBubble(BuildContext context, bool isMe) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: isMe ? Colors.blue[400] : Colors.grey[200],
+        color: isMe
+            ? Colors.blue[400]
+            : (isDark ? Colors.grey[800] : Colors.grey[200]),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Linkify(
         text: message.content,
         style: TextStyle(
           fontSize: 16,
-          color: isMe ? Colors.white : Colors.black87,
+          color: isMe ? Colors.white : (isDark ? Colors.white : Colors.black87),
         ),
         linkStyle: TextStyle(
           fontSize: 16,
@@ -314,14 +317,19 @@ class MessageBubble extends StatelessWidget {
   Widget _buildFileBubble(BuildContext context, bool isMe) {
     final iconData = _getFileIcon(message.filename ?? '');
     final iconColor = _getFileIconColor(message.filename ?? '');
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: isMe ? Colors.blue[50] : Colors.grey[100],
+        color: isMe
+            ? (isDark ? Colors.blue[900] : Colors.blue[50])
+            : (isDark ? Colors.grey[800] : Colors.grey[100]),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isMe ? Colors.blue[200]! : Colors.grey[300]!,
+          color: isMe
+              ? (isDark ? Colors.blue[700]! : Colors.blue[200]!)
+              : (isDark ? Colors.grey[700]! : Colors.grey[300]!),
           width: 1,
         ),
       ),
@@ -359,7 +367,9 @@ class MessageBubble extends StatelessWidget {
                     Text(
                       _isTransferring || _isTransferFailed
                           ? ''
-                          : 'Tap to download',
+                          : (message.transferState == TransferState.complete
+                              ? (isMe ? 'Sent · Tap to open' : 'Received · Tap to open')
+                              : 'Tap to open'),
                       style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                     ),
                   ],
@@ -378,15 +388,20 @@ class MessageBubble extends StatelessWidget {
   }
 
   Widget _buildImageBubble(BuildContext context, bool isMe) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     // If still transferring, show a placeholder with progress
     if (_isTransferring || _isTransferFailed) {
       return Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: isMe ? Colors.blue[50] : Colors.grey[100],
+          color: isMe
+              ? (isDark ? Colors.blue[900] : Colors.blue[50])
+              : (isDark ? Colors.grey[800] : Colors.grey[100]),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isMe ? Colors.blue[200]! : Colors.grey[300]!,
+            color: isMe
+                ? (isDark ? Colors.blue[700]! : Colors.blue[200]!)
+                : (isDark ? Colors.grey[700]! : Colors.grey[300]!),
             width: 1,
           ),
         ),
