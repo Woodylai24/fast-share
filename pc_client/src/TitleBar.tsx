@@ -37,7 +37,7 @@ export function TitleBar({ onSettingsClick }: TitleBarProps) {
         <button
           className="title-bar-button settings"
           onClick={onSettingsClick}
-          title="AI Settings"
+          title="Settings"
         >
           <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">
             <path d="M10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0-2a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/>

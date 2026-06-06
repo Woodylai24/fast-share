@@ -9,6 +9,9 @@ export const MessageType = {
 export type MessageTypeValue =
   (typeof MessageType)[keyof typeof MessageType];
 
+// Transfer state for file/image messages
+export type TransferState = "pending" | "transferring" | "complete" | "failed";
+
 // Message interface
 export interface Message {
   id: string;
@@ -18,6 +21,8 @@ export interface Message {
   timestamp: Date;
   url?: string;
   filename?: string;
+  transferState?: TransferState;
+  transferProgress?: number; // 0-100
 }
 
 // Stored message interface for JSON parsing
@@ -29,6 +34,8 @@ export interface StoredMessage {
   timestamp: string;
   url?: string;
   filename?: string;
+  // transferState/transferProgress not persisted — in-progress transfers
+  // shouldn't survive reload, and completed transfers don't need them
 }
 
 // Connection info shape returned from Electron

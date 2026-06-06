@@ -39,6 +39,46 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("file-received", listener);
     return () => ipcRenderer.removeListener("file-received", listener);
   },
+  onFileReceivedStart: (
+    callback: (data: { filename: string; fileSize: number; mimeType: string }) => void,
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      value: { filename: string; fileSize: number; mimeType: string },
+    ) => callback(value);
+    ipcRenderer.on("file-received-start", listener);
+    return () => ipcRenderer.removeListener("file-received-start", listener);
+  },
+  onFileProgress: (
+    callback: (data: { filename: string; receivedBytes: number; totalBytes: number; direction: string; failed?: boolean }) => void,
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      value: { filename: string; receivedBytes: number; totalBytes: number; direction: string; failed?: boolean },
+    ) => callback(value);
+    ipcRenderer.on("file-progress", listener);
+    return () => ipcRenderer.removeListener("file-progress", listener);
+  },
+  onFileSentStart: (
+    callback: (data: { filename: string; fileSize: number; mimeType: string }) => void,
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      value: { filename: string; fileSize: number; mimeType: string },
+    ) => callback(value);
+    ipcRenderer.on("file-sent-start", listener);
+    return () => ipcRenderer.removeListener("file-sent-start", listener);
+  },
+  onFileSentComplete: (
+    callback: (data: { filename: string; failed?: boolean }) => void,
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      value: { filename: string; failed?: boolean },
+    ) => callback(value);
+    ipcRenderer.on("file-sent-complete", listener);
+    return () => ipcRenderer.removeListener("file-sent-complete", listener);
+  },
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   // AI Settings
   getAISettings: () => ipcRenderer.invoke("get-ai-settings"),

@@ -39,7 +39,7 @@
 .summary-title-section h3 {
   margin: 0;
   font-size: 1rem;
-  color: var(--text-sent);
+  color: var(--text-primary);
 }
 
 .summary-model {
@@ -59,14 +59,14 @@
 }
 
 .summary-close:hover {
-  background: var(--bg-received);
-  color: var(--text-sent);
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .summary-subtitle {
   padding: 0 1.25rem 0.5rem;
   font-size: 0.75rem;
-  color: #aaa;
+  color: var(--text-secondary);
   border-bottom: 1px solid var(--border-secondary);
   padding-bottom: 0.75rem;
   white-space: nowrap;
@@ -138,7 +138,7 @@
 
 .summary-cancel-btn {
   background: var(--bg-received);
-  color: #ccc;
+  color: var(--text-secondary);
   border: 1px solid var(--border-primary);
   padding: 0.4rem 1rem;
   border-radius: 6px;

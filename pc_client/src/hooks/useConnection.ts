@@ -57,28 +57,130 @@ export function useConnection() {
       setIsConnected(false);
     });
 
+    // --- Incoming file transfer: create placeholder on start ---
+    const cleanupFileReceivedStart =
+      window.electronAPI.onFileReceivedStart((data) => {
+        const isImage = isImageFile(data.filename);
+        const placeholder: Message = {
+          id: generateId(),
+          type: isImage ? MessageType.IMAGE : MessageType.FILE,
+          content: data.filename,
+          sender: "Mobile",
+          timestamp: new Date(),
+          filename: data.filename,
+          transferState: "pending",
+          transferProgress: 0,
+        };
+        setMessages((prev) => [...prev, placeholder]);
+      });
+
+    // --- File progress updates (both send and receive) ---
+    const cleanupFileProgress = window.electronAPI.onFileProgress((data) => {
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.filename !== data.filename) return msg;
+          // Don't update messages that are already complete
+          if (msg.transferState === "complete") return msg;
+
+          if (data.failed) {
+            return { ...msg, transferState: "failed" as const };
+          }
+
+          const progress =
+            data.totalBytes > 0
+              ? Math.round((data.receivedBytes / data.totalBytes) * 100)
+              : 0;
+
+          return {
+            ...msg,
+            transferState: "transferring" as const,
+            transferProgress: progress,
+          };
+        }),
+      );
+    });
+
+    // --- Incoming file transfer: finalize on complete ---
     const cleanupFileReceived = window.electronAPI.onFileReceived((file) => {
       const isImage = isImageFile(file.filename);
-      const msgId = generateId();
       const httpPort = connectionInfo?.httpPort || 8081;
       const fileUrl = `http://localhost:${httpPort}/files/${encodeURIComponent(file.filename)}`;
 
-      const newMessage: Message = {
-        id: msgId,
-        type: isImage ? MessageType.IMAGE : MessageType.FILE,
-        content: file.filename,
-        sender: "Mobile",
-        timestamp: new Date(),
-        url: fileUrl,
-        filename: file.filename,
-      };
-      setMessages((prev) => [...prev, newMessage]);
+      setMessages((prev) => {
+        // Find and update the placeholder message
+        const existingIdx = prev.findIndex(
+          (m) =>
+            m.filename === file.filename &&
+            m.transferState !== undefined &&
+            m.transferState !== "complete",
+        );
+
+        if (existingIdx >= 0) {
+          const updated = [...prev];
+          updated[existingIdx] = {
+            ...updated[existingIdx],
+            type: isImage ? MessageType.IMAGE : MessageType.FILE,
+            url: fileUrl,
+            transferState: "complete",
+            transferProgress: 100,
+          };
+          return updated;
+        }
+
+        // No placeholder found — create a new message (legacy fallback)
+        const newMessage: Message = {
+          id: generateId(),
+          type: isImage ? MessageType.IMAGE : MessageType.FILE,
+          content: file.filename,
+          sender: "Mobile",
+          timestamp: new Date(),
+          url: fileUrl,
+          filename: file.filename,
+        };
+        return [...prev, newMessage];
+      });
     });
+
+    // --- Outgoing file transfer: mark existing message as pending ---
+    const cleanupFileSentStart = window.electronAPI.onFileSentStart((data) => {
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.filename !== data.filename || msg.sender !== "Me") return msg;
+          return {
+            ...msg,
+            transferState: "pending" as const,
+            transferProgress: 0,
+          };
+        }),
+      );
+    });
+
+    // --- Outgoing file transfer: mark complete ---
+    const cleanupFileSentComplete =
+      window.electronAPI.onFileSentComplete((data) => {
+        setMessages((prev) =>
+          prev.map((msg) => {
+            if (msg.filename !== data.filename || msg.sender !== "Me") return msg;
+            if (data.failed) {
+              return { ...msg, transferState: "failed" as const };
+            }
+            return {
+              ...msg,
+              transferState: "complete" as const,
+              transferProgress: 100,
+            };
+          }),
+        );
+      });
 
     return () => {
       cleanupWsMessage();
       cleanupWsDisconnect();
+      cleanupFileReceivedStart();
+      cleanupFileProgress();
       cleanupFileReceived();
+      cleanupFileSentStart();
+      cleanupFileSentComplete();
     };
   }, [connectionInfo?.httpPort]);
 
