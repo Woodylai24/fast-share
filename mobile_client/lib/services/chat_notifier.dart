@@ -799,12 +799,13 @@ class ChatNotifier extends ChangeNotifier {
         'checksum': checksum,
       });
 
-      // Mark as complete
+      // Mark as complete — set url to local file path so it can be opened
       _updateMessageById(
         placeholder.id,
         _messages.firstWhere((m) => m.id == placeholder.id).copyWith(
           transferState: TransferState.complete,
           transferProgress: 1.0,
+          url: 'file://$filePath',
         ),
       );
       _lastNotifiedProgress = -1;
