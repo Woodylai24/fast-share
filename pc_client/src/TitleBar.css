@@ -69,6 +69,10 @@
   background: var(--bg-hover);
 }
 
+.title-bar-button.folder {
+  width: 40px;
+}
+
 .title-bar-button.settings {
   width: 40px;
 }

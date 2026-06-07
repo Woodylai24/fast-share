@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fast_share_mobile/screens/settings_screen.dart';
+import 'package:fast_share_mobile/screens/file_browser_screen.dart';
 import 'package:fast_share_mobile/services/theme_notifier.dart';
 
 class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
@@ -29,6 +30,20 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
         onPressed: onDisconnect,
       ),
       actions: [
+        // Folder icon — navigate to file browser
+        IconButton(
+          icon: const Icon(Icons.folder_open),
+          tooltip: 'Files',
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const FileBrowserScreen(),
+              ),
+            );
+          },
+        ),
+        // Settings
         IconButton(
           icon: const Icon(Icons.settings),
           tooltip: 'Settings',
@@ -41,19 +56,16 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
             );
           },
         ),
+        // File upload
         IconButton(
           icon: const Icon(Icons.file_upload),
           onPressed: isDisconnected ? null : onPickFile,
         ),
+        // Clear history
         IconButton(
           icon: const Icon(Icons.delete_sweep),
           tooltip: 'Clear History',
           onPressed: onClearHistory,
-        ),
-        IconButton(
-          icon: const Icon(Icons.close),
-          tooltip: 'Disconnect',
-          onPressed: onDisconnect,
         ),
       ],
     );

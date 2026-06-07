@@ -12,6 +12,7 @@ import 'package:fast_share_mobile/theme/app_theme.dart';
 import 'package:fast_share_mobile/screens/home_screen.dart';
 import 'package:fast_share_mobile/screens/onboarding_screen.dart';
 import 'package:fast_share_mobile/services/settings_service.dart';
+import 'package:fast_share_mobile/services/file_storage.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -95,6 +96,9 @@ Future<void> main() async {
   // Create and initialize theme notifier
   final ThemeNotifier themeNotifier = ThemeNotifier();
   await themeNotifier.init();
+
+  // Migrate files from old internal storage to new external storage
+  await FileStorage.migrateIfNeeded();
 
   runApp(FastShareApp(themeNotifier: themeNotifier));
 }

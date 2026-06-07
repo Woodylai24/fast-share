@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   selectFile: () => ipcRenderer.invoke("select-file"),
   openExternal: (url: string) => ipcRenderer.send("open-external", url),
   openPath: (filePath: string) => ipcRenderer.send("open-path", filePath),
+  openFolder: () => ipcRenderer.send("open-folder"),
   // Window controls
   windowMinimize: () => ipcRenderer.send("window-minimize"),
   windowMaximize: () => ipcRenderer.send("window-maximize"),
