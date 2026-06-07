@@ -8,6 +8,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:fast_share_mobile/services/file_storage.dart';
 import 'package:fast_share_mobile/models/message.dart';
 import 'package:fast_share_mobile/services/message_storage.dart';
 import 'package:fast_share_mobile/services/notifications.dart';
@@ -613,15 +614,15 @@ class ChatNotifier extends ChangeNotifier {
 
     String fileUrl;
     try {
-      final appDir = await getApplicationDocumentsDirectory();
-      final fastShareDir = Directory('${appDir.path}/FastShare');
-      if (!await fastShareDir.exists()) {
-        await fastShareDir.create(recursive: true);
-      }
+      final fastShareDir = await FileStorage.getFastShareDir();
       final localFile = File('${fastShareDir.path}/$filename');
       await localFile.writeAsBytes(assembled);
       fileUrl = 'file://${localFile.path}';
       debugPrint('[DEBUG] File saved locally: ${localFile.path}');
+      // Scan image files so they appear in Gallery
+      if (isImage) {
+        await FileStorage.scanFile(localFile.path);
+      }
     } catch (e) {
       debugPrint('[DEBUG] Failed to save file locally: $e');
       fileUrl = 'http://$ip:$httpPort/files/${Uri.encodeComponent(filename)}';

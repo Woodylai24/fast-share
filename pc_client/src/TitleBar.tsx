@@ -35,6 +35,15 @@ export function TitleBar({ onSettingsClick }: TitleBarProps) {
       </div>
       <div className="title-bar-actions">
         <button
+          className="title-bar-button folder"
+          onClick={() => window.electronAPI.openFolder()}
+          title="Open FastShare Folder"
+        >
+          <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">
+            <path d="M2 4a2 2 0 012-2h4l2 2h6a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V4z"/>
+          </svg>
+        </button>
+        <button
           className="title-bar-button settings"
           onClick={onSettingsClick}
           title="Settings"

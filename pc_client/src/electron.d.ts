@@ -21,6 +21,7 @@ export interface IElectronAPI {
   selectFile: () => Promise<string[] | undefined>;
   openExternal: (url: string) => void;
   openPath: (filePath: string) => void;
+  openFolder: () => void;
   // Window controls
   windowMinimize: () => void;
   windowMaximize: () => void;

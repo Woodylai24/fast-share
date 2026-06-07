@@ -97,6 +97,18 @@ function registerIpcHandlers(
     }
   });
 
+  ipcMainInstance.on("open-folder", async () => {
+    try {
+      const fastShareDir = path.join(os.homedir(), "FastShare");
+      if (!fs.existsSync(fastShareDir)) {
+        fs.mkdirSync(fastShareDir, { recursive: true });
+      }
+      await shell.openPath(fastShareDir);
+    } catch (error) {
+      console.error("[DEBUG] Failed to open FastShare folder:", error);
+    }
+  });
+
   ipcMainInstance.handle("get-connection-info", () => {
     return {
       ips: getLocalIps(),

@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:fast_share_mobile/services/file_storage.dart';
 import 'package:fast_share_mobile/ai_service.dart';
 import 'package:fast_share_mobile/models/message.dart';
 
@@ -51,8 +51,7 @@ class _SummaryBottomSheetState extends State<SummaryBottomSheet> {
       if (widget.message.url!.startsWith('file://')) {
         filePath = widget.message.url!.replaceFirst('file://', '');
       } else {
-        final appDir = await getApplicationDocumentsDirectory();
-        final fastShareDir = Directory('${appDir.path}/FastShare');
+        final fastShareDir = await FileStorage.getFastShareDir();
         filePath = '${fastShareDir.path}/${widget.message.filename ?? 'file'}';
         if (!await File(filePath).exists()) {
           filePath = null;

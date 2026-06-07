@@ -1,6 +1,7 @@
 package io.github.woodylai24.fastshare
 
 import android.content.Intent
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -13,11 +14,13 @@ class MainActivity : FlutterActivity() {
     private val SHARE_CHANNEL = "fast_share/share_receiver"
     private val FILE_CHANNEL = "fast_share/file_helper"
     private val SETTINGS_CHANNEL = "fast_share/settings"
+    private val MEDIA_CHANNEL = "fast_share/media"
 
     override fun configureFlutterEngine(flutterEngine: io.flutter.embedding.engine.FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         setupFileHelperChannel(flutterEngine)
         setupSettingsChannel(flutterEngine)
+        setupMediaChannel(flutterEngine)
         checkPendingShare(flutterEngine)
     }
 
@@ -45,6 +48,24 @@ class MainActivity : FlutterActivity() {
                             result.success(null)
                         } catch (e: Exception) {
                             result.error("OPEN_FAILED", "Could not open notification settings", e.message)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun setupMediaChannel(flutterEngine: io.flutter.embedding.engine.FlutterEngine) {
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, MEDIA_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "scanFile" -> {
+                        val filePath = call.argument<String>("path")
+                        if (filePath != null) {
+                            MediaScannerConnection.scanFile(this, arrayOf(filePath), null, null)
+                            result.success(true)
+                        } else {
+                            result.error("INVALID", "path is null", null)
                         }
                     }
                     else -> result.notImplemented()
