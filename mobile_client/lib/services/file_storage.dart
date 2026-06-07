@@ -4,7 +4,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class FileStorage {
-  static const _migratedKey = 'file_storage_migrated_v2';
+  static const _migratedKey = 'file_storage_migrated_v3';
   static const _mediaChannel = MethodChannel('fast_share/media');
 
   /// Returns the external FastShare directory.
@@ -44,12 +44,14 @@ class FileStorage {
           if (entity is File) {
             final filename = entity.uri.pathSegments.last;
             final newPath = '${newDir.path}/$filename';
+            final newFile = File(newPath);
             // Don't overwrite if file already exists in new location
-            if (!await File(newPath).exists()) {
-              await entity.rename(newPath);
-            } else {
-              await entity.delete();
+            if (!await newFile.exists()) {
+              // Cannot use rename() across different filesystems (internal → external).
+              // Copy + delete instead.
+              await entity.copy(newPath);
             }
+            await entity.delete();
           }
         }
         // Remove old directory if empty
