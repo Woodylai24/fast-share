@@ -510,6 +510,25 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
         console.log(
           "[DEBUG] Messages will be queued and sent via push notification.",
         );
+
+        // Abnormal close — mobile likely in background or network dropped
+        // Queue messages for when they come back, but start a delayed notification
+        const clientId = clientInfo.deviceId;
+        setTimeout(() => {
+          // Check if this client has reconnected
+          let reconnected = false;
+          connectedClients.forEach((c) => {
+            if (c.deviceId === clientId) reconnected = true;
+          });
+          if (!reconnected) {
+            const mainWindow = getMainWindow();
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send("ws-disconnect", {
+                reason: "Mobile lost connection",
+              });
+            }
+          }
+        }, 60_000); // 60 seconds
       }
     });
 
