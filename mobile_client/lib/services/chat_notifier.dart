@@ -103,6 +103,13 @@ class ChatNotifier extends ChangeNotifier {
   DateTime? _lastMessageReceivedAt;
   static const int _connectionTimeout = 60; // seconds (2x server ping interval)
 
+  // Reconnect with backoff
+  static const int _initialReconnectDelay = 1; // seconds
+  static const int _maxReconnectDelay = 30;    // seconds
+  static const int _maxReconnectDuration = 120; // seconds total (2 min)
+  int _reconnectAttempt = 0;
+  Timer? _reconnectTimer;
+  DateTime? _reconnectStartTime;
 
   // Scroll control (exposed for the widget to use)
   final ScrollController scrollController = ScrollController();
@@ -192,17 +199,13 @@ class ChatNotifier extends ChangeNotifier {
       onError: (error) {
         debugPrint('[DEBUG] WebSocket ERROR: $error');
         if (!_isDisconnected && !_intentionalDisconnect) {
-          debugPrint(
-            '[DEBUG] Connection error, will attempt reconnect on resume',
-          );
+          handleDisconnect('Connection error');
         }
       },
       onDone: () {
         debugPrint('[DEBUG] WebSocket connection CLOSED');
         if (!_isDisconnected && !_intentionalDisconnect) {
-          debugPrint(
-            '[DEBUG] Connection closed unexpectedly, will attempt reconnect on resume',
-          );
+          handleDisconnect('Connection lost');
         }
       },
     );
@@ -233,63 +236,92 @@ class ChatNotifier extends ChangeNotifier {
     if (_isReconnecting || _intentionalDisconnect) return;
 
     _isReconnecting = true;
+    _reconnectAttempt = 0;
+    _reconnectStartTime = DateTime.now();
     notifyListeners();
-    debugPrint('[DEBUG] Attempting to reconnect...');
+    debugPrint('[DEBUG] Starting reconnect with exponential backoff...');
+    _tryReconnect();
+  }
 
+  void _tryReconnect() {
+    if (_intentionalDisconnect) {
+      _cancelReconnect();
+      return;
+    }
+
+    // Check if we've exceeded max duration
+    if (_reconnectStartTime != null &&
+        DateTime.now().difference(_reconnectStartTime!).inSeconds >= _maxReconnectDuration) {
+      debugPrint('[DEBUG] Max reconnect duration exceeded, giving up');
+      _cancelReconnect();
+      // Don't call handleDisconnect again — we're already disconnected
+      // Just notify that reconnection failed
+      _disconnectReason = 'Could not reconnect to PC';
+      notifyListeners();
+      return;
+    }
+
+    // Calculate delay with exponential backoff
+    final delaySeconds = (_initialReconnectDelay * (1 << _reconnectAttempt)).clamp(1, _maxReconnectDelay);
+    _reconnectAttempt++;
+    debugPrint('[DEBUG] Reconnect attempt $_reconnectAttempt, waiting ${delaySeconds}s...');
+    notifyListeners();
+
+    _reconnectTimer = Timer(Duration(seconds: delaySeconds), () {
+      _performReconnectAttempt();
+    });
+  }
+
+  void _performReconnectAttempt() {
     try {
-      await _subscription?.cancel();
+      _subscription?.cancel();
+      _crypto.init().then((_) {
+        _keyExchangeComplete = false;
 
-      await _crypto.init();
-      _keyExchangeComplete = false;
+        final wsUrl = Uri.parse('ws://$ip:$port');
+        channel = WebSocketChannel.connect(wsUrl);
 
-      final wsUrl = Uri.parse('ws://$ip:$port');
-      channel = WebSocketChannel.connect(wsUrl);
-
-      _subscription = channel.stream.listen(
-        (message) {
-          debugPrint('[DEBUG] Received message on reconnect: $message');
-          try {
-            final data = jsonDecode(message);
-            _handleRawMessage(data);
-          } catch (e) {
-            debugPrint('[DEBUG] Failed to parse message: $e');
-            if (!_isDisconnected) {
-              _messages.add(
-                Message.text(content: message.toString(), sender: 'PC'),
-              );
-              notifyListeners();
-              _saveMessages();
-              _scrollToBottom();
+        _subscription = channel.stream.listen(
+          (message) {
+            debugPrint('[DEBUG] Received message on reconnect: $message');
+            try {
+              final data = jsonDecode(message);
+              _handleRawMessage(data);
+            } catch (e) {
+              debugPrint('[DEBUG] Failed to parse message: $e');
             }
-          }
-        },
-        onError: (error) {
-          debugPrint('[DEBUG] Reconnect WebSocket ERROR: $error');
-          if (!_intentionalDisconnect) {
-            handleDisconnect('Connection error: $error');
-          }
-        },
-        onDone: () {
-          debugPrint('[DEBUG] Reconnect WebSocket CLOSED');
-          if (!_intentionalDisconnect) {
-            handleDisconnect('Connection closed');
-          }
-        },
-      );
+          },
+          onError: (error) {
+            debugPrint('[DEBUG] Reconnect attempt $_reconnectAttempt failed (error): $error');
+            _tryReconnect(); // Retry
+          },
+          onDone: () {
+            debugPrint('[DEBUG] Reconnect attempt $_reconnectAttempt failed (done)');
+            if (!_intentionalDisconnect) {
+              _tryReconnect(); // Retry
+            }
+          },
+        );
 
-      _sendJson({'type': 'reconnect', 'deviceId': _deviceId});
-      debugPrint('[DEBUG] Reconnect message sent');
-
-      _isDisconnected = false;
-      _isReconnecting = false;
-      notifyListeners();
+        _sendJson({'type': 'reconnect', 'deviceId': _deviceId});
+        debugPrint('[DEBUG] Reconnect message sent for attempt $_reconnectAttempt');
+      });
     } catch (e) {
-      debugPrint('[DEBUG] Reconnect failed: $e');
-      _isReconnecting = false;
-      notifyListeners();
-      handleDisconnect('Reconnection failed');
+      debugPrint('[DEBUG] Reconnect attempt $_reconnectAttempt exception: $e');
+      _tryReconnect(); // Retry
     }
   }
+
+  void _cancelReconnect() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _isReconnecting = false;
+    _reconnectAttempt = 0;
+    _reconnectStartTime = null;
+    notifyListeners();
+  }
+
+  int get reconnectAttempt => _reconnectAttempt;
 
   // ─── Lifecycle ───────────────────────────────────────────────────────
 
@@ -343,6 +375,10 @@ class ChatNotifier extends ChangeNotifier {
 
     if (msgType == 'handshake') {
       debugPrint('[DEBUG] Received handshake from server');
+      if (_isReconnecting) {
+        _cancelReconnect();
+      }
+      _isDisconnected = false;
       return;
     }
 
@@ -966,15 +1002,19 @@ class ChatNotifier extends ChangeNotifier {
     _isDisconnected = true;
 
     _lastMessageTimer?.cancel();
+    _reconnectTimer?.cancel(); // Cancel any in-progress reconnect
     _incomingFile?._cleanup();
     _incomingFile = null;
     _keyExchangeTimeout?.cancel();
 
     channel.sink.close();
+    _disconnectReason = reason;
     notifyListeners();
 
-    // Navigation is handled by the widget layer
-    _disconnectReason = reason;
+    // Auto-reconnect unless intentional
+    if (!_intentionalDisconnect) {
+      _attemptReconnectIfEnabled();
+    }
   }
 
   void handleUserDisconnect() {
@@ -1055,6 +1095,7 @@ class ChatNotifier extends ChangeNotifier {
   void dispose() {
     _clipboardPollTimer?.cancel();
     _lastMessageTimer?.cancel();
+    _reconnectTimer?.cancel();
     _keyExchangeTimeout?.cancel();
     _incomingFile?._cleanup();
     ShareHandler.unregisterSendCallback();
