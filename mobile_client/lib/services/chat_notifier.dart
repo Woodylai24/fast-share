@@ -98,6 +98,11 @@ class ChatNotifier extends ChangeNotifier {
 
   // Progress throttle — last notified progress percentage (0-100)
   int _lastNotifiedProgress = -1;
+  // Heartbeat / connection timeout monitoring
+  Timer? _lastMessageTimer;
+  DateTime? _lastMessageReceivedAt;
+  static const int _connectionTimeout = 60; // seconds (2x server ping interval)
+
 
   // Scroll control (exposed for the widget to use)
   final ScrollController scrollController = ScrollController();
@@ -320,6 +325,16 @@ class ChatNotifier extends ChangeNotifier {
   void _handleRawMessage(Map<String, dynamic> data) {
     final String msgType = data['type'] ?? '';
 
+    // Reset connection timeout on every inbound message (including pings)
+    _resetConnectionTimeout();
+
+    // Handle ping — respond with pong (plaintext, before encrypted check)
+    if (msgType == 'ping') {
+      channel.sink.add(jsonEncode({'type': 'pong'}));
+      debugPrint('[DEBUG] Received ping, sent pong');
+      return;
+    }
+
     if (msgType == 'key-exchange') {
       debugPrint('[DEBUG] Received key-exchange from server');
       _handleKeyExchange(data['publicKey'] as String);
@@ -369,9 +384,30 @@ class ChatNotifier extends ChangeNotifier {
         '[DEBUG] Key exchange complete — encrypted channel established',
       );
       notifyListeners();
+      // Start heartbeat timeout monitoring now that the connection is fully up
+      _resetConnectionTimeout();
     } catch (e) {
       debugPrint('[DEBUG] Key exchange failed: $e');
     }
+  }
+
+  /// Reset the connection timeout timer. Called on every inbound message.
+  /// If no message arrives within [_connectionTimeout] seconds, the
+  /// connection is considered dead and handleDisconnect is triggered.
+  void _resetConnectionTimeout() {
+    _lastMessageReceivedAt = DateTime.now();
+    _lastMessageTimer?.cancel();
+    _lastMessageTimer = Timer(
+      const Duration(seconds: _connectionTimeout),
+      () {
+        if (!_intentionalDisconnect && !_isDisconnected) {
+          debugPrint(
+            '[DEBUG] No message received for $_connectionTimeout seconds — connection dead',
+          );
+          handleDisconnect('Connection timed out');
+        }
+      },
+    );
   }
 
   Future<void> _handleEncryptedMessage(Map<String, dynamic> wrapper) async {
@@ -929,6 +965,7 @@ class ChatNotifier extends ChangeNotifier {
     if (_isDisconnected) return;
     _isDisconnected = true;
 
+    _lastMessageTimer?.cancel();
     _incomingFile?._cleanup();
     _incomingFile = null;
     _keyExchangeTimeout?.cancel();
@@ -945,6 +982,7 @@ class ChatNotifier extends ChangeNotifier {
     _isDisconnected = true;
     _intentionalDisconnect = true;
 
+    _lastMessageTimer?.cancel();
     _incomingFile?._cleanup();
     _incomingFile = null;
     _keyExchangeTimeout?.cancel();
@@ -1016,6 +1054,7 @@ class ChatNotifier extends ChangeNotifier {
   @override
   void dispose() {
     _clipboardPollTimer?.cancel();
+    _lastMessageTimer?.cancel();
     _keyExchangeTimeout?.cancel();
     _incomingFile?._cleanup();
     ShareHandler.unregisterSendCallback();
