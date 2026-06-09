@@ -997,6 +997,35 @@ class ChatNotifier extends ChangeNotifier {
 
   // ─── Disconnect ──────────────────────────────────────────────────────
 
+  /// Maps raw disconnect reasons / close codes to user-friendly messages.
+  String _friendlyDisconnectReason(String? rawReason, [int? closeCode]) {
+    if (rawReason != null && rawReason.isNotEmpty) {
+      if (rawReason.contains('Connection timed out')) {
+        return 'Connection timed out — PC may be offline';
+      }
+      if (rawReason.contains('Connection error')) {
+        return 'Could not reach PC — are you on the same WiFi?';
+      }
+      if (rawReason.contains('Connection lost')) {
+        return 'Connection lost — your WiFi may have dropped';
+      }
+      return rawReason;
+    }
+
+    switch (closeCode) {
+      case 1006:
+        return 'Connection lost — your WiFi may have dropped';
+      case 4001:
+        return 'Connection timed out — PC may be offline';
+      case 1000:
+        return 'PC disconnected';
+      case 1001:
+        return 'PC is shutting down';
+      default:
+        return 'Connection lost';
+    }
+  }
+
   void handleDisconnect(String reason) {
     if (_isDisconnected) return;
     _isDisconnected = true;
@@ -1008,7 +1037,7 @@ class ChatNotifier extends ChangeNotifier {
     _keyExchangeTimeout?.cancel();
 
     channel.sink.close();
-    _disconnectReason = reason;
+    _disconnectReason = _friendlyDisconnectReason(reason);
     notifyListeners();
 
     // Auto-reconnect unless intentional
