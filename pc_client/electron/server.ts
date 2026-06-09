@@ -15,6 +15,8 @@ import { startClipboardSync } from "./clipboard-sync";
 const WS_PORT = 8080;
 const HTTP_PORT = 8081;
 const KEY_EXCHANGE_TIMEOUT_MS = 5000; // 5 seconds
+const PING_INTERVAL = 30_000; // 30 seconds
+const PONG_TIMEOUT = 10_000; // 10 seconds to respond
 
 // --- Client Tracking ---
 interface ClientInfo {
@@ -23,6 +25,10 @@ interface ClientInfo {
   crypto: CryptoManager;
   keyExchangeComplete: boolean;
   keyExchangeTimer?: ReturnType<typeof setTimeout>;
+  // Heartbeat state
+  pongPending: boolean;
+  pingTimer?: ReturnType<typeof setInterval>;
+  pongTimeout?: ReturnType<typeof setTimeout>;
   // File chunk reassembly state
   incomingFile?: {
     filename: string;
@@ -141,6 +147,41 @@ function broadcastToClients(message: object, excludeWs?: WebSocket) {
   });
 }
 
+// --- Heartbeat (ping/pong) ---
+function startHeartbeat(client: ClientInfo) {
+  if (client.pingTimer) return; // already running
+
+  client.pingTimer = setInterval(() => {
+    if (client.ws.readyState !== WebSocket.OPEN) return;
+
+    client.ws.send(JSON.stringify({ type: "ping" }));
+    client.pongPending = true;
+
+    // Clear any previous pong timeout
+    if (client.pongTimeout) {
+      clearTimeout(client.pongTimeout);
+    }
+
+    client.pongTimeout = setTimeout(() => {
+      if (client.pongPending) {
+        console.error("[DEBUG] Heartbeat timeout — closing connection");
+        client.ws.close(4001, "heartbeat timeout");
+      }
+    }, PONG_TIMEOUT);
+  }, PING_INTERVAL);
+}
+
+function stopHeartbeat(client: ClientInfo) {
+  if (client.pingTimer) {
+    clearInterval(client.pingTimer);
+    client.pingTimer = undefined;
+  }
+  if (client.pongTimeout) {
+    clearTimeout(client.pongTimeout);
+    client.pongTimeout = undefined;
+  }
+}
+
 // --- Server Setup ---
 function startServers(options: { getMainWindow: GetMainWindowFn }) {
   const { getMainWindow } = options;
@@ -227,6 +268,7 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
       ws,
       crypto: new CryptoManager(),
       keyExchangeComplete: false,
+      pongPending: false,
     };
     connectedClients.add(clientInfo);
 
@@ -314,6 +356,8 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
               clientInfo.keyExchangeTimer = undefined;
             }
             console.log("[DEBUG] Key exchange complete — encrypted channel established");
+            // Start heartbeat now that the connection is fully established
+            startHeartbeat(clientInfo);
           } catch (error) {
             console.error("[DEBUG] Key exchange failed:", error);
             ws.close(4002, "Key exchange failed");
@@ -345,6 +389,7 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
             deviceId: clientInfo.deviceId,
             crypto: new CryptoManager(),
             keyExchangeComplete: false,
+            pongPending: false,
           };
           // Replace the client info in the set
           connectedClients.delete(clientInfo);
@@ -368,8 +413,18 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
           return;
         }
 
+        if (data.type === "pong") {
+          clientInfo.pongPending = false;
+          if (clientInfo.pongTimeout) {
+            clearTimeout(clientInfo.pongTimeout);
+            clientInfo.pongTimeout = undefined;
+          }
+          return;
+        }
+
         if (data.type === "disconnect") {
           console.log("[DEBUG] Client sent disconnect message:", data.reason);
+          stopHeartbeat(clientInfo);
           getMainWindow()?.webContents.send("ws-disconnect", {
             reason: data.reason || "Mobile client disconnected",
           });
@@ -423,6 +478,7 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
       );
 
       // Clean up timers
+      stopHeartbeat(clientInfo);
       if (clientInfo.keyExchangeTimer) {
         clearTimeout(clientInfo.keyExchangeTimer);
       }
@@ -451,6 +507,7 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
 
     ws.on("error", (error) => {
       console.error("[DEBUG] WebSocket ERROR:", error);
+      stopHeartbeat(clientInfo);
       if (clientInfo.keyExchangeTimer) {
         clearTimeout(clientInfo.keyExchangeTimer);
       }
@@ -474,6 +531,7 @@ export {
   sendEncryptedToClients,
   broadcastToClients,
   queueMessage,
+  stopHeartbeat,
   wss,
   WS_PORT,
   HTTP_PORT,

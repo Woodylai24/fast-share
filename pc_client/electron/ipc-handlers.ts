@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { WebSocket } from "ws";
-import { sendEncrypted, broadcastToClients, connectedClients, getLocalIp, getLocalIps, WS_PORT, HTTP_PORT, wss, queueMessage } from "./server";
+import { sendEncrypted, broadcastToClients, connectedClients, getLocalIp, getLocalIps, WS_PORT, HTTP_PORT, wss, queueMessage, stopHeartbeat } from "./server";
 import { sendFileEncrypted } from "./file-transfer";
 import { sendPushNotification, deviceFcmTokens } from "./firebase";
 import { aiSettingsStore } from "./ai-summarize";
@@ -168,12 +168,22 @@ function registerIpcHandlers(
     // Clear tracked clients
     const { cleanupFileReassembly } = require("./file-transfer");
     connectedClients.forEach((client) => {
+      stopHeartbeat(client);
       cleanupFileReassembly(client);
       if (client.keyExchangeTimer) {
         clearTimeout(client.keyExchangeTimer);
       }
     });
     connectedClients.clear();
+  });
+
+  // Renderer sends pong in response to a ping from mobile (relayed through server)
+  ipcMainInstance.on("send-pong", () => {
+    connectedClients.forEach((client) => {
+      if (client.ws.readyState === WebSocket.OPEN) {
+        client.ws.send(JSON.stringify({ type: "pong" }));
+      }
+    });
   });
 
   ipcMainInstance.handle("select-file", async () => {
