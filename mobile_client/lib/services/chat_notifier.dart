@@ -369,6 +369,10 @@ class ChatNotifier extends ChangeNotifier {
 
     if (msgType == 'key-exchange') {
       debugPrint('[DEBUG] Received key-exchange from server');
+      if (_isReconnecting) {
+        _cancelReconnect();
+      }
+      _isDisconnected = false;
       _handleKeyExchange(data['publicKey'] as String);
       return;
     }
