@@ -8,6 +8,7 @@ import 'package:fast_share_mobile/widgets/message_input.dart';
 import 'package:fast_share_mobile/widgets/clipboard_dialog.dart';
 import 'package:fast_share_mobile/widgets/file_offer_dialog.dart';
 import 'package:fast_share_mobile/widgets/message_actions.dart';
+import 'package:fast_share_mobile/widgets/reconnect_banner.dart';
 import 'package:fast_share_mobile/services/theme_notifier.dart';
 import 'package:fast_share_mobile/screens/home_screen.dart';
 
@@ -65,26 +66,6 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     final fileOffer = _notifier.consumePendingFileOffer();
     if (fileOffer != null) {
       showFileOfferDialog(context, fileOffer.filename, fileOffer.url);
-    }
-
-    // Handle disconnect navigation
-    if (_notifier.isDisconnected && _notifier.disconnectReason != null) {
-      final reason = _notifier.disconnectReason;
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(
-          builder: (context) => HomeScreen(themeNotifier: widget.themeNotifier),
-        ),
-        (route) => false,
-      );
-      if (reason != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Disconnected: $reason'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
     }
   }
 
@@ -146,6 +127,23 @@ class _ConnectedScreenState extends State<ConnectedScreen>
           ),
           body: Column(
             children: [
+              ReconnectBanner(
+                isReconnecting: _notifier.isReconnecting,
+                isDisconnected: _notifier.isDisconnected,
+                reconnectAttempt: _notifier.reconnectAttempt,
+                disconnectReason: _notifier.disconnectReason,
+                onConnectPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => HomeScreen(themeNotifier: widget.themeNotifier),
+                    ),
+                  );
+                },
+                onDisconnectPressed: () {
+                  _handleUserDisconnect();
+                },
+              ),
               Expanded(
                 child: ListView.builder(
                   controller: _notifier.scrollController,
