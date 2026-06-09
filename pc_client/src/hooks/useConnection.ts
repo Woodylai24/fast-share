@@ -40,6 +40,7 @@ export function useConnection() {
         setMessages((prev) => [...prev, newMessage]);
       } else if (data.type === "handshake") {
         setIsConnected(true);
+        window.electronAPI.getLastConnected().then(setLastConnected);
       } else if (data.type === "ping") {
         window.electronAPI.sendPong();
       } else if (data.type === "disconnect") {
@@ -58,6 +59,7 @@ export function useConnection() {
     const cleanupWsDisconnect = window.electronAPI.onWsDisconnect(() => {
       console.log("[DEBUG] Disconnect event received");
       setIsConnected(false);
+      window.electronAPI.getLastConnected().then(setLastConnected);
     });
 
     // --- Incoming file transfer: create placeholder on start ---

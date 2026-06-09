@@ -165,8 +165,8 @@ function startHeartbeat(client: ClientInfo) {
 
     client.pongTimeout = setTimeout(() => {
       if (client.pongPending) {
-        console.error("[DEBUG] Heartbeat timeout — closing connection");
-        client.ws.close(4001, "heartbeat timeout");
+        console.error("[DEBUG] Heartbeat timeout — terminating connection");
+        client.ws.terminate();
       }
     }, PONG_TIMEOUT);
   }, PING_INTERVAL);
@@ -398,6 +398,26 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
           // Replace the client info in the set
           connectedClients.delete(clientInfo);
           connectedClients.add(newClientInfo);
+
+          // Save last-connected info for reconnect
+          if (data.deviceId) {
+            settingsStore.set('lastConnectedDevice', data.deviceId || 'Unknown');
+            settingsStore.set('lastConnectedAt', new Date().toISOString());
+          }
+
+          // Send handshake confirmation for reconnect
+          ws.send(
+            JSON.stringify({
+              type: "handshake",
+              message: "Reconnected to PC",
+            }),
+          );
+
+          // Notify renderer that mobile has reconnected
+          getMainWindow()?.webContents.send("ws-message", {
+            type: "handshake",
+            message: "Mobile Reconnected",
+          });
 
           // Set key exchange timeout for reconnected client
           newClientInfo.keyExchangeTimer = setTimeout(() => {
