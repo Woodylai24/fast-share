@@ -61,6 +61,8 @@ export interface IElectronAPI {
   saveSettings: (settings: { theme?: string; [key: string]: unknown }) => Promise<{ success: boolean }>;
   onSettingsChanged: (callback: (settings: Record<string, unknown>) => void) => () => void;
   onPlayNotificationSound: (callback: () => void) => () => void;
+  // Last connected device info
+  getLastConnected: () => Promise<{ device: string; at: string }>;
 }
 
 declare global {

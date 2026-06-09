@@ -13,6 +13,22 @@ import { useMessages } from "./hooks/useMessages";
 import { type Message } from "./types";
 import "./App.css";
 
+function formatRelativeTime(isoString: string): string {
+  const now = new Date();
+  const then = new Date(isoString);
+  const diffMs = now.getTime() - then.getTime();
+  const diffSeconds = Math.floor(diffMs / 1000);
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSeconds < 60) return "just now";
+  if (diffMinutes < 60) return `${diffMinutes} minute${diffMinutes !== 1 ? "s" : ""} ago`;
+  if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? "s" : ""} ago`;
+  if (diffDays < 2) return "yesterday";
+  return `${diffDays} days ago`;
+}
+
 function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -37,6 +53,7 @@ function App() {
     setMessages,
     disconnect,
     getQrData,
+    lastConnected,
   } = useConnection();
 
   const {
@@ -238,6 +255,12 @@ function App() {
               ? "Status: Mobile Connected"
               : "Status: Waiting for connection..."}
           </div>
+
+          {!isConnected && lastConnected?.device && (
+            <div style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginTop: "0.5rem", textAlign: "center" }}>
+              Last connected: {lastConnected.device}, {formatRelativeTime(lastConnected.at)}
+            </div>
+          )}
         </div>
 
         {isConnected && (

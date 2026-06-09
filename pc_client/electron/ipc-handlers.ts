@@ -117,6 +117,13 @@ function registerIpcHandlers(
     };
   });
 
+  ipcMainInstance.handle('get-last-connected', () => {
+    return {
+      device: settingsStore.get('lastConnectedDevice', ''),
+      at: settingsStore.get('lastConnectedAt', ''),
+    };
+  });
+
   ipcMainInstance.on("send-text", (event, text) => {
     const message = { type: "text", content: text };
 

@@ -10,6 +10,8 @@ const settingsStore = new ElectronStore({
     notificationsEnabled: true,
     theme: "system",
     onboardingComplete: false,
+    lastConnectedDevice: '',
+    lastConnectedAt: '',
   },
 });
 

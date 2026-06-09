@@ -127,4 +127,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("play-notification-sound", listener);
     return () => ipcRenderer.removeListener("play-notification-sound", listener);
   },
+  // Last connected device info
+  getLastConnected: () => ipcRenderer.invoke('get-last-connected'),
 });

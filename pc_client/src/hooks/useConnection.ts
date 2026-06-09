@@ -9,6 +9,7 @@ export function useConnection() {
   const [selectedIp, setSelectedIp] = useState<string>("");
   const [isConnected, setIsConnected] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [lastConnected, setLastConnected] = useState<{ device: string; at: string } | null>(null);
 
   // Get connection info from Electron Main
   useEffect(() => {
@@ -20,6 +21,8 @@ export function useConnection() {
         setSelectedIp(pref || info.ips[0]);
       }
     });
+
+    window.electronAPI.getLastConnected().then(setLastConnected);
   }, []);
 
   // Listen for WS messages, disconnects, and file transfers
@@ -208,5 +211,6 @@ export function useConnection() {
     setMessages,
     disconnect,
     getQrData,
+    lastConnected,
   };
 }

@@ -10,6 +10,7 @@ import { CryptoManager, isUnencryptedType } from "./crypto";
 import { processFileMessage, cleanupFileReassembly, FILE_CHUNK_SIZE } from "./file-transfer";
 import { deviceFcmTokens } from "./firebase";
 import { startClipboardSync } from "./clipboard-sync";
+import settingsStore from "./settings-store";
 
 // --- Configuration ---
 const WS_PORT = 8080;
@@ -294,6 +295,9 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
             clientInfo.deviceId = data.deviceId;
             console.log("[DEBUG] Device ID:", data.deviceId);
 
+            settingsStore.set('lastConnectedDevice', data.deviceId || 'Unknown');
+            settingsStore.set('lastConnectedAt', new Date().toISOString());
+
             if (data.fcmToken) {
               deviceFcmTokens.set(data.deviceId, data.fcmToken);
               console.log(
@@ -484,6 +488,10 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
       }
       cleanupFileReassembly(clientInfo);
       connectedClients.delete(clientInfo);
+
+      if (clientInfo.deviceId) {
+        settingsStore.set('lastConnectedAt', new Date().toISOString());
+      }
 
       const isAbnormalClosure = code === 1006;
       const isIntentionalDisconnect = code === 1000 || code === 1001;
