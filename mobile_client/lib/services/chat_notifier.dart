@@ -166,7 +166,7 @@ class ChatNotifier extends ChangeNotifier {
       // behind because layout hasn't caught up yet.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (scrollController.hasClients) {
-          scrollController.jumpTo(scrollController.position.maxScrollExtent + 10000);
+          scrollController.jumpTo(scrollController.position.maxScrollExtent);
         }
       });
     }
