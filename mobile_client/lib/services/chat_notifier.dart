@@ -79,6 +79,12 @@ class ChatNotifier extends ChangeNotifier {
   /// and cleared after the first reconnect attempt completes or succeeds.
   bool _suppressBanner = false;
 
+  /// Timestamp of the last background transition. Used to ignore spurious
+  /// 'resumed' events that Android fires during surface teardown on the
+  /// first background transition. If a resume arrives within 1 second of
+  /// going to background, it's treated as spurious and ignored.
+  DateTime? _lastBackgroundAt;
+
   /// Whether the reconnect banner should be visible.
   /// Suppresses the banner on the first reconnect attempt (e.g. returning
   /// from background) so the user doesn't see a flash of "Reconnecting..."
@@ -368,12 +374,24 @@ class ChatNotifier extends ChangeNotifier {
     notifyListeners();
 
     if (isInForeground) {
+      // Guard against spurious 'resumed' on first background. Android can
+      // fire hidden → resumed in rapid succession during surface teardown.
+      // If we just went to background <1s ago, ignore this resume.
+      if (_lastBackgroundAt != null) {
+        final elapsed = DateTime.now().difference(_lastBackgroundAt!);
+        if (elapsed.inSeconds < 1) {
+          debugPrint('[DEBUG] Spurious resume ignored (elapsed: ${elapsed.inMilliseconds}ms)');
+          return;
+        }
+      }
+      _lastBackgroundAt = null;
       if (!_intentionalDisconnect && !_isConnected()) {
         _attemptReconnectIfEnabled();
       }
       checkAndSendClipboard();
     } else if (shouldCloseWs) {
       saveCurrentClipboard();
+      _lastBackgroundAt = DateTime.now();
       // Close WebSocket cleanly when truly backgrounded (hidden/detached).
       // Skipped for 'paused' state (quick-settings shade, split-screen, etc.)
       if (_isConnected() && !_intentionalDisconnect) {

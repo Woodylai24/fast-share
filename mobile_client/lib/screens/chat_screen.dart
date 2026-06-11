@@ -75,10 +75,17 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     // 'paused' covers quick-settings shade, split-screen, etc. — the app is
     // still partially visible and the OS is unlikely to kill it, so keep the
     // WebSocket alive.
-    final isForeground = state == AppLifecycleState.resumed;
-    final shouldCloseWs = state == AppLifecycleState.hidden ||
-        state == AppLifecycleState.detached;
-    _notifier.handleAppLifecycleChange(isForeground, shouldCloseWs: shouldCloseWs);
+    //
+    // Spurious 'resumed' on first background is handled in the notifier via
+    // _lastBackgroundAt timestamp guard — resumes within 1s of going to
+    // background are ignored.
+    if (state == AppLifecycleState.resumed) {
+      _notifier.handleAppLifecycleChange(true);
+    } else {
+      final shouldCloseWs = state == AppLifecycleState.hidden ||
+          state == AppLifecycleState.detached;
+      _notifier.handleAppLifecycleChange(false, shouldCloseWs: shouldCloseWs);
+    }
   }
 
   void _handleUserDisconnect() {
