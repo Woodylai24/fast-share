@@ -73,11 +73,18 @@ class ChatNotifier extends ChangeNotifier {
   bool _isReconnecting = false;
   bool get isReconnecting => _isReconnecting;
 
+  /// When true, the reconnect/disconnected banner is suppressed because
+  /// we're in the middle of a background-to-foreground transition. Set when
+  /// the app goes to background (we know reconnect will happen on resume)
+  /// and cleared after the first reconnect attempt completes or succeeds.
+  bool _suppressBanner = false;
+
   /// Whether the reconnect banner should be visible.
   /// Suppresses the banner on the first reconnect attempt (e.g. returning
   /// from background) so the user doesn't see a flash of "Reconnecting..."
-  /// before the connection is quickly restored.
-  bool get showReconnectBanner => _isReconnecting && _reconnectAttempt > 1;
+  /// or "Connection Lost" before the connection is quickly restored.
+  bool get showReconnectBanner =>
+      (_isReconnecting || _isDisconnected) && !_suppressBanner;
 
   bool _isInForeground = true;
   bool get isInForeground => _isInForeground;
@@ -217,6 +224,13 @@ class ChatNotifier extends ChangeNotifier {
       },
     );
 
+    // If we were backgrounded during init, abort the handshake
+    if (_isDisconnected) {
+      debugPrint('[DEBUG] Aborting handshake — disconnected during init');
+      await channel.sink.close();
+      return;
+    }
+
     // Send handshake with device ID and FCM token
     final prefs = await SharedPreferences.getInstance();
     final fcmToken = prefs.getString('fcm_token');
@@ -258,6 +272,12 @@ class ChatNotifier extends ChangeNotifier {
     // Calculate delay with exponential backoff
     final delaySeconds = (_initialReconnectDelay * (1 << _reconnectAttempt)).clamp(1, _maxReconnectDelay);
     _reconnectAttempt++;
+
+    // Stop suppressing the banner after the first attempt fails
+    if (_reconnectAttempt > 1) {
+      _suppressBanner = false;
+    }
+
     debugPrint('[DEBUG] Reconnect attempt $_reconnectAttempt, waiting ${delaySeconds}s...');
     notifyListeners();
 
@@ -358,6 +378,7 @@ class ChatNotifier extends ChangeNotifier {
       // Skipped for 'paused' state (quick-settings shade, split-screen, etc.)
       if (_isConnected() && !_intentionalDisconnect) {
         debugPrint('[DEBUG] App backgrounded — closing WebSocket with code 4000');
+        _suppressBanner = true;
         channel.sink.close(4000, 'app_backgrounded');
         _isDisconnected = true;
         _reconnectTimer?.cancel();
@@ -398,6 +419,7 @@ class ChatNotifier extends ChangeNotifier {
         _cancelReconnect();
       }
       _isDisconnected = false;
+      _suppressBanner = false;
       _flushPendingMessages();
       _handleKeyExchange(data['publicKey'] as String);
       return;

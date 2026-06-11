@@ -136,7 +136,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
             children: [
               ReconnectBanner(
                 isReconnecting: _notifier.showReconnectBanner,
-                isDisconnected: _notifier.isDisconnected,
+                isDisconnected: _notifier.showReconnectBanner,
                 reconnectAttempt: _notifier.reconnectAttempt,
                 disconnectReason: _notifier.disconnectReason,
                 onConnectPressed: () {
