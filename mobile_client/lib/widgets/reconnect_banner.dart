@@ -46,7 +46,7 @@ class ReconnectBanner extends StatelessWidget {
               child: Text(
                 isReconnecting
                     ? 'Reconnecting... (attempt $reconnectAttempt)'
-                    : (disconnectReason ?? 'Disconnected'),
+                    : 'Connection Lost',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 14,

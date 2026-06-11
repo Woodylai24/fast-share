@@ -71,6 +71,8 @@ class _ConnectedScreenState extends State<ConnectedScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    debugPrint('[LIFECYCLE] didChangeAppLifecycleState: $state');
+    debugPrint('[LIFECYCLE]   _isDisconnected=${_notifier.isDisconnected}, _isReconnecting=${_notifier.isReconnecting}');
     // Only treat 'resumed' as foreground and 'hidden'/'detached' as background.
     // 'paused' covers quick-settings shade, split-screen, etc. — the app is
     // still partially visible and the OS is unlikely to kill it, so keep the
@@ -78,6 +80,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
     final isForeground = state == AppLifecycleState.resumed;
     final shouldCloseWs = state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached;
+    debugPrint('[LIFECYCLE]   isForeground=$isForeground, shouldCloseWs=$shouldCloseWs');
     _notifier.handleAppLifecycleChange(isForeground, shouldCloseWs: shouldCloseWs);
   }
 
@@ -136,7 +139,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
             children: [
               ReconnectBanner(
                 isReconnecting: _notifier.showReconnectBanner,
-                isDisconnected: _notifier.isDisconnected,
+                isDisconnected: _notifier.showReconnectBanner,
                 reconnectAttempt: _notifier.reconnectAttempt,
                 disconnectReason: _notifier.disconnectReason,
                 onConnectPressed: () {

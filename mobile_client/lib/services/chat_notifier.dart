@@ -73,11 +73,16 @@ class ChatNotifier extends ChangeNotifier {
   bool _isReconnecting = false;
   bool get isReconnecting => _isReconnecting;
 
-  /// Whether the reconnect banner should be visible.
-  /// Suppresses the banner on the first reconnect attempt (e.g. returning
-  /// from background) so the user doesn't see a flash of "Reconnecting..."
-  /// before the connection is quickly restored.
-  bool get showReconnectBanner => _isReconnecting && _reconnectAttempt > 1;
+  /// Whether the reconnect/disconnect banner should be visible.
+  /// Suppresses both banners on the first reconnect attempt (e.g. returning
+  /// from background) so the user doesn't see a flash before the connection
+  /// is quickly restored. Shows on subsequent failures.
+  bool get showReconnectBanner {
+    if (!_isDisconnected && !_isReconnecting) return false;
+    // Hide during first reconnect attempt
+    if (_isReconnecting && _reconnectAttempt <= 1) return false;
+    return true;
+  }
 
   bool _isInForeground = true;
   bool get isInForeground => _isInForeground;
@@ -176,7 +181,7 @@ class ChatNotifier extends ChangeNotifier {
 
   Future<void> _connect() async {
     final wsUrl = Uri.parse('ws://$ip:$port');
-    debugPrint('[DEBUG] ChatNotifier: Connecting to $wsUrl');
+    debugPrint('[LIFECYCLE] _connect() called — creating WebSocket to $wsUrl');
 
     await _crypto.init();
     _keyExchangeComplete = false;
@@ -267,6 +272,7 @@ class ChatNotifier extends ChangeNotifier {
   }
 
   void _performReconnectAttempt() {
+    debugPrint('[LIFECYCLE] _performReconnectAttempt #$_reconnectAttempt — _isDisconnected=$_isDisconnected, _isReconnecting=$_isReconnecting');
     try {
       _subscription?.cancel();
       _crypto.init().then((_) {
@@ -344,12 +350,17 @@ class ChatNotifier extends ChangeNotifier {
   // ─── Lifecycle ───────────────────────────────────────────────────────
 
   void handleAppLifecycleChange(bool isInForeground, {bool shouldCloseWs = true}) {
+    debugPrint('[LIFECYCLE] handleAppLifecycleChange: isInForeground=$isInForeground, shouldCloseWs=$shouldCloseWs');
+    debugPrint('[LIFECYCLE]   state: _isDisconnected=$_isDisconnected, _isReconnecting=$_isReconnecting, _intentionalDisconnect=$_intentionalDisconnect, _isConnected=${_isConnected()}');
     _isInForeground = isInForeground;
     notifyListeners();
 
     if (isInForeground) {
       if (!_intentionalDisconnect && !_isConnected()) {
+        debugPrint('[LIFECYCLE]   → calling _attemptReconnectIfEnabled');
         _attemptReconnectIfEnabled();
+      } else {
+        debugPrint('[LIFECYCLE]   → skipping reconnect (intentionalDisconnect=$_intentionalDisconnect, isConnected=${_isConnected()})');
       }
       checkAndSendClipboard();
     } else if (shouldCloseWs) {
@@ -357,7 +368,7 @@ class ChatNotifier extends ChangeNotifier {
       // Close WebSocket cleanly when truly backgrounded (hidden/detached).
       // Skipped for 'paused' state (quick-settings shade, split-screen, etc.)
       if (_isConnected() && !_intentionalDisconnect) {
-        debugPrint('[DEBUG] App backgrounded — closing WebSocket with code 4000');
+        debugPrint('[LIFECYCLE]   → closing WS with code 4000');
         channel.sink.close(4000, 'app_backgrounded');
         _isDisconnected = true;
         _reconnectTimer?.cancel();
