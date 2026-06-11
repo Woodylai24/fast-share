@@ -369,11 +369,18 @@ class ChatNotifier extends ChangeNotifier {
       // Skipped for 'paused' state (quick-settings shade, split-screen, etc.)
       if (_isConnected() && !_intentionalDisconnect) {
         debugPrint('[LIFECYCLE]   → closing WS with code 4000');
-        channel.sink.close(4000, 'app_backgrounded');
+        // Set _isDisconnected BEFORE closing the socket. On the first
+        // (local, fresh) connection, channel.sink.close() can complete
+        // almost instantly, firing the onDone callback as a microtask
+        // before we reach the _isDisconnected = true line below. The
+        // onDone handler checks !_isDisconnected and would call
+        // handleDisconnect → _attemptReconnectIfEnabled, creating the
+        // phantom reconnect.
         _isDisconnected = true;
         _reconnectTimer?.cancel();
         _reconnectTimer = null;
         _isReconnecting = false;
+        channel.sink.close(4000, 'app_backgrounded');
       }
     }
   }
