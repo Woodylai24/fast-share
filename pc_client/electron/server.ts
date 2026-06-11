@@ -391,24 +391,19 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
               name: data.device || 'Unknown',
             });
           }
-          // Re-do key exchange on reconnect — send new public key
-          const newClientInfo: ClientInfo = {
-            ws,
-            deviceId: clientInfo.deviceId,
-            crypto: new CryptoManager(),
-            keyExchangeComplete: false,
-            pongPending: false,
-          };
-          // Replace the client info in the set
-          // Clear the original key exchange timer — it was set on initial connection
-          // and will fire after 5s, killing this WebSocket before reconnect completes
+          // Reset clientInfo in-place for reconnect.
+          // We must NOT create a new object — the ws.on('message') closure
+          // captures the original clientInfo reference. If we swap it out,
+          // the key-exchange response from mobile updates the OLD object,
+          // and the new object's keyExchangeTimer fires after 5s killing the socket.
+          stopHeartbeat(clientInfo);
           if (clientInfo.keyExchangeTimer) {
             clearTimeout(clientInfo.keyExchangeTimer);
             clientInfo.keyExchangeTimer = undefined;
           }
-          stopHeartbeat(clientInfo);
-          connectedClients.delete(clientInfo);
-          connectedClients.add(newClientInfo);
+          clientInfo.crypto = new CryptoManager();
+          clientInfo.keyExchangeComplete = false;
+          clientInfo.pongPending = false;
 
           // Save last-connected info for reconnect
           if (data.deviceId) {
@@ -431,8 +426,8 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
           });
 
           // Set key exchange timeout for reconnected client
-          newClientInfo.keyExchangeTimer = setTimeout(() => {
-            if (!newClientInfo.keyExchangeComplete) {
+          clientInfo.keyExchangeTimer = setTimeout(() => {
+            if (!clientInfo.keyExchangeComplete) {
               console.error("[DEBUG] Key exchange timeout on reconnect — closing connection");
               ws.close(4001, "Key exchange timeout");
             }
@@ -441,7 +436,7 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
           ws.send(
             JSON.stringify({
               type: "key-exchange",
-              publicKey: newClientInfo.crypto.getPublicKeyBase64(),
+              publicKey: clientInfo.crypto.getPublicKeyBase64(),
             }),
           );
           console.log("[DEBUG] Sent new key-exchange for reconnect");
