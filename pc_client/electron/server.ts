@@ -385,10 +385,13 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
               });
             }
 
-            // Update pairing info (FCM token may have rotated)
+            // Update pairing info — only refresh FCM token, don't overwrite name.
+            // The name is set during initial handshake. Reconnect doesn't send it,
+            // so data.device is undefined and would overwrite the stored name with
+            // 'Unknown'.
             pairDevice(data.deviceId, {
               fcmToken: data.fcmToken,
-              name: data.device || 'Unknown',
+              name: data.device,  // undefined → pairDevice keeps existing name
             });
           }
           // Reset clientInfo in-place for reconnect.

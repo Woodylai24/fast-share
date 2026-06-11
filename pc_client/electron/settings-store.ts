@@ -32,14 +32,14 @@ export function getAllPairedDevices(): Record<string, { fcmToken: string; name: 
   return (settingsStore.get("pairedDevices") as Record<string, { fcmToken: string; name: string; pairedAt: string; lastSeenAt: string }>) ?? {};
 }
 
-export function pairDevice(deviceId: string, info: { fcmToken?: string; name: string }): void {
+export function pairDevice(deviceId: string, info: { fcmToken?: string; name?: string }): void {
   const devices = settingsStore.get("pairedDevices") as Record<string, { fcmToken: string; name: string; pairedAt: string; lastSeenAt: string }>;
   const existing = devices[deviceId];
   const now = new Date().toISOString();
 
   devices[deviceId] = {
     fcmToken: info.fcmToken ?? existing?.fcmToken ?? "",
-    name: info.name,
+    name: info.name ?? existing?.name ?? "Unknown",
     pairedAt: existing?.pairedAt ?? now,
     lastSeenAt: now,
   };

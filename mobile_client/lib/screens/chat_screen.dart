@@ -71,7 +71,14 @@ class _ConnectedScreenState extends State<ConnectedScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _notifier.handleAppLifecycleChange(state == AppLifecycleState.resumed);
+    // Only treat 'resumed' as foreground and 'hidden'/'detached' as background.
+    // 'paused' covers quick-settings shade, split-screen, etc. — the app is
+    // still partially visible and the OS is unlikely to kill it, so keep the
+    // WebSocket alive.
+    final isForeground = state == AppLifecycleState.resumed;
+    final shouldCloseWs = state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached;
+    _notifier.handleAppLifecycleChange(isForeground, shouldCloseWs: shouldCloseWs);
   }
 
   void _handleUserDisconnect() {
@@ -128,7 +135,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
           body: Column(
             children: [
               ReconnectBanner(
-                isReconnecting: _notifier.isReconnecting,
+                isReconnecting: _notifier.showReconnectBanner,
                 isDisconnected: _notifier.isDisconnected,
                 reconnectAttempt: _notifier.reconnectAttempt,
                 disconnectReason: _notifier.disconnectReason,

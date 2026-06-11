@@ -73,6 +73,12 @@ class ChatNotifier extends ChangeNotifier {
   bool _isReconnecting = false;
   bool get isReconnecting => _isReconnecting;
 
+  /// Whether the reconnect banner should be visible.
+  /// Suppresses the banner on the first reconnect attempt (e.g. returning
+  /// from background) so the user doesn't see a flash of "Reconnecting..."
+  /// before the connection is quickly restored.
+  bool get showReconnectBanner => _isReconnecting && _reconnectAttempt > 1;
+
   bool _isInForeground = true;
   bool get isInForeground => _isInForeground;
 
@@ -154,19 +160,14 @@ class ChatNotifier extends ChangeNotifier {
 
   void _scrollToBottom() {
     if (scrollController.hasClients) {
-      // Double post-frame callback: the first fires after build but before
-      // layout has fully settled, so maxScrollExtent may be stale by one item.
-      // The second fires after layout has caught up with the new item count.
+      // Use jumpTo with a very large offset — Flutter clamps it to
+      // maxScrollExtent automatically. This avoids the stale-extent bug
+      // where animateTo(maxScrollExtent) targets a value that's one item
+      // behind because layout hasn't caught up yet.
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (scrollController.hasClients) {
-            scrollController.animateTo(
-              scrollController.position.maxScrollExtent,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOut,
-            );
-          }
-        });
+        if (scrollController.hasClients) {
+          scrollController.jumpTo(scrollController.position.maxScrollExtent + 10000);
+        }
       });
     }
   }
@@ -342,7 +343,7 @@ class ChatNotifier extends ChangeNotifier {
 
   // ─── Lifecycle ───────────────────────────────────────────────────────
 
-  void handleAppLifecycleChange(bool isInForeground) {
+  void handleAppLifecycleChange(bool isInForeground, {bool shouldCloseWs = true}) {
     _isInForeground = isInForeground;
     notifyListeners();
 
@@ -351,9 +352,10 @@ class ChatNotifier extends ChangeNotifier {
         _attemptReconnectIfEnabled();
       }
       checkAndSendClipboard();
-    } else {
+    } else if (shouldCloseWs) {
       saveCurrentClipboard();
-      // Close WebSocket cleanly when backgrounded
+      // Close WebSocket cleanly when truly backgrounded (hidden/detached).
+      // Skipped for 'paused' state (quick-settings shade, split-screen, etc.)
       if (_isConnected() && !_intentionalDisconnect) {
         debugPrint('[DEBUG] App backgrounded — closing WebSocket with code 4000');
         channel.sink.close(4000, 'app_backgrounded');
