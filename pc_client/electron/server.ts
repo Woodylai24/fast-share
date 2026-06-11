@@ -455,6 +455,27 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
           return;
         }
 
+        if (data.type === "going-background") {
+          console.log("[DEBUG] Mobile going to background — device:", data.deviceId);
+          // Mobile OS may suspend the isolate before the WebSocket close frame
+          // (code 4000) is transmitted. This plaintext message is sent BEFORE
+          // the close and is much more likely to reach us. Treat it as an
+          // immediate background transition.
+          stopHeartbeat(clientInfo);
+          if (clientInfo.deviceId) {
+            updateDeviceLastSeen(clientInfo.deviceId);
+          }
+          getMainWindow()?.webContents.send("ws-disconnect", {
+            reason: "Mobile went to background",
+            deviceId: clientInfo.deviceId,
+            code: 4000,
+          });
+          cleanupFileReassembly(clientInfo);
+          connectedClients.delete(clientInfo);
+          ws.close();
+          return;
+        }
+
         if (data.type === "disconnect") {
           console.log("[DEBUG] Client sent disconnect message:", data.reason);
           stopHeartbeat(clientInfo);
@@ -509,6 +530,12 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
         "Reason:",
         reason.toString(),
       );
+
+      // If already removed (e.g. by 'going-background' handler), skip
+      if (!connectedClients.has(clientInfo)) {
+        console.log("[DEBUG] Close event for already-removed client — skipping");
+        return;
+      }
 
       // Clean up timers
       stopHeartbeat(clientInfo);

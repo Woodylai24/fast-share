@@ -125,6 +125,7 @@ const Set<String> unencryptedTypes = {
   'key-exchange',
   'reconnect',
   'disconnect',
+  'going-background',
 };
 
 /// Check if a message type should be sent unencrypted.

@@ -377,8 +377,12 @@ class ChatNotifier extends ChangeNotifier {
       // Close WebSocket cleanly when truly backgrounded (hidden/detached).
       // Skipped for 'paused' state (quick-settings shade, split-screen, etc.)
       if (_isConnected() && !_intentionalDisconnect) {
-        debugPrint('[DEBUG] App backgrounded — closing WebSocket with code 4000');
+        debugPrint('[DEBUG] App backgrounded — sending going-background message');
         _suppressBanner = true;
+        // Send a plaintext message BEFORE closing. Regular data frames are
+        // more likely to be flushed to the TCP buffer before the OS suspends
+        // the isolate. The close frame (code 4000) often doesn't make it.
+        _sendJson({'type': 'going-background', 'deviceId': _deviceId});
         channel.sink.close(4000, 'app_backgrounded');
         _isDisconnected = true;
         _reconnectTimer?.cancel();
