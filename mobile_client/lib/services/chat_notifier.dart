@@ -154,15 +154,19 @@ class ChatNotifier extends ChangeNotifier {
 
   void _scrollToBottom() {
     if (scrollController.hasClients) {
-      // Schedule after the next frame so the list has rebuilt with the new message
+      // Double post-frame callback: the first fires after build but before
+      // layout has fully settled, so maxScrollExtent may be stale by one item.
+      // The second fires after layout has caught up with the new item count.
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (scrollController.hasClients) {
-          scrollController.animateTo(
-            scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (scrollController.hasClients) {
+            scrollController.animateTo(
+              scrollController.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+            );
+          }
+        });
       });
     }
   }
@@ -291,6 +295,13 @@ class ChatNotifier extends ChangeNotifier {
             }
           },
         );
+
+        // Reset disconnected flag — we have a fresh WebSocket now.
+        // The old flag was set for the previous dead connection.
+        // Without this, _sendJson's guard at the top silently drops the
+        // reconnect message, the server never receives it, and the 5s
+        // key-exchange timer fires → connection closed.
+        _isDisconnected = false;
 
         _sendJson({'type': 'reconnect', 'deviceId': _deviceId});
         debugPrint('[DEBUG] Reconnect message sent for attempt $_reconnectAttempt');
