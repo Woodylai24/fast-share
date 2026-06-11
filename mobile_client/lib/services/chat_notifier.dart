@@ -116,6 +116,14 @@ class ChatNotifier extends ChangeNotifier {
   int _reconnectAttempt = 0;
   Timer? _reconnectTimer;
 
+  // Connection watchdog: detects silent disconnect (e.g. WiFi disabled).
+  // Server sends pings every 30s. If we don't receive ANY message for 45s,
+  // the connection is dead.
+  DateTime? _lastServerMessageAt;
+  Timer? _watchdogTimer;
+  static const Duration _watchdogInterval = Duration(seconds: 10);
+  static const Duration _watchdogTimeout = Duration(seconds: 45);
+
   // Pending message queue (Phase 3)
   final List<Message> _pendingMessages = [];
 
@@ -327,6 +335,27 @@ class ChatNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ─── Connection watchdog ────────────────────────────────────────────
+
+  void _startWatchdog() {
+    _watchdogTimer?.cancel();
+    _lastServerMessageAt = DateTime.now();
+    _watchdogTimer = Timer.periodic(_watchdogInterval, (_) {
+      if (_isDisconnected || _intentionalDisconnect) {
+        _watchdogTimer?.cancel();
+        return;
+      }
+      if (_lastServerMessageAt == null) return;
+      final elapsed = DateTime.now().difference(_lastServerMessageAt!);
+      if (elapsed > _watchdogTimeout) {
+        debugPrint('[WATCHDOG] No server message for ${elapsed.inSeconds}s — treating as disconnected');
+        _watchdogTimer?.cancel();
+        handleDisconnect('Connection timed out');
+      }
+    });
+    debugPrint('[WATCHDOG] Started — timeout: ${_watchdogTimeout.inSeconds}s');
+  }
+
   int get reconnectAttempt => _reconnectAttempt;
 
   // ─── Pending message flush (Phase 3) ─────────────────────────────────
@@ -380,6 +409,7 @@ class ChatNotifier extends ChangeNotifier {
         _reconnectTimer?.cancel();
         _reconnectTimer = null;
         _isReconnecting = false;
+        _watchdogTimer?.cancel();
         channel.sink.close(4000, 'app_backgrounded');
       }
     }
@@ -402,6 +432,7 @@ class ChatNotifier extends ChangeNotifier {
 
   void _handleRawMessage(Map<String, dynamic> data) {
     final String msgType = data['type'] ?? '';
+    _lastServerMessageAt = DateTime.now();
 
     // Handle ping — respond with pong (plaintext, before encrypted check)
     if (msgType == 'ping') {
@@ -427,6 +458,7 @@ class ChatNotifier extends ChangeNotifier {
         _cancelReconnect();
       }
       _isDisconnected = false;
+      _reconnectAttempt = 0;
       return;
     }
 
@@ -467,6 +499,7 @@ class ChatNotifier extends ChangeNotifier {
       debugPrint(
         '[DEBUG] Key exchange complete — encrypted channel established',
       );
+      _startWatchdog();
       notifyListeners();
     } catch (e) {
       debugPrint('[DEBUG] Key exchange failed: $e');
@@ -1069,6 +1102,7 @@ class ChatNotifier extends ChangeNotifier {
     _isDisconnected = true;
 
     _reconnectTimer?.cancel(); // Cancel any in-progress reconnect
+    _watchdogTimer?.cancel();
     _incomingFile?._cleanup();
     _incomingFile = null;
     _keyExchangeTimeout?.cancel();
@@ -1161,6 +1195,7 @@ class ChatNotifier extends ChangeNotifier {
     _clipboardPollTimer?.cancel();
     _reconnectTimer?.cancel();
     _keyExchangeTimeout?.cancel();
+    _watchdogTimer?.cancel();
     _incomingFile?._cleanup();
     ShareHandler.unregisterSendCallback();
     _subscription?.cancel();

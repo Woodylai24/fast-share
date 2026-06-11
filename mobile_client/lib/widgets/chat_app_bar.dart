@@ -24,7 +24,7 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context) {
     return AppBar(
-      title: Text('Connected'),
+      title: Text('Fast Share'),
       leading: IconButton(
         icon: const Icon(Icons.arrow_back),
         onPressed: onDisconnect,
