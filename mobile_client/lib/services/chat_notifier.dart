@@ -465,6 +465,7 @@ class ChatNotifier extends ChangeNotifier {
         final content = data['content'] ?? '';
         _messages.add(Message.text(content: content, sender: 'PC'));
         notifyListeners();
+        _scrollToBottom();
         _saveMessages();
         if (!_isInForeground) {
           showLocalNotification("New Message", content, payload: "COPY:$content");
@@ -479,6 +480,7 @@ class ChatNotifier extends ChangeNotifier {
         final url = data['url'] ?? '';
         _messages.add(Message.file(filename: filename, url: url, sender: 'PC'));
         notifyListeners();
+        _scrollToBottom();
         _saveMessages();
         if (!_isInForeground) {
           showLocalNotification("File Received", filename, payload: url);

@@ -400,6 +400,13 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
             pongPending: false,
           };
           // Replace the client info in the set
+          // Clear the original key exchange timer — it was set on initial connection
+          // and will fire after 5s, killing this WebSocket before reconnect completes
+          if (clientInfo.keyExchangeTimer) {
+            clearTimeout(clientInfo.keyExchangeTimer);
+            clientInfo.keyExchangeTimer = undefined;
+          }
+          stopHeartbeat(clientInfo);
           connectedClients.delete(clientInfo);
           connectedClients.add(newClientInfo);
 
