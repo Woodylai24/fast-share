@@ -98,18 +98,15 @@ class ChatNotifier extends ChangeNotifier {
 
   // Progress throttle — last notified progress percentage (0-100)
   int _lastNotifiedProgress = -1;
-  // Heartbeat / connection timeout monitoring
-  Timer? _lastMessageTimer;
-  DateTime? _lastMessageReceivedAt;
-  static const int _connectionTimeout = 60; // seconds (2x server ping interval)
 
   // Reconnect with backoff
   static const int _initialReconnectDelay = 1; // seconds
   static const int _maxReconnectDelay = 30;    // seconds
-  static const int _maxReconnectDuration = 120; // seconds total (2 min)
   int _reconnectAttempt = 0;
   Timer? _reconnectTimer;
-  DateTime? _reconnectStartTime;
+
+  // Pending message queue (Phase 3)
+  final List<Message> _pendingMessages = [];
 
   // Scroll control (exposed for the widget to use)
   final ScrollController scrollController = ScrollController();
@@ -237,7 +234,6 @@ class ChatNotifier extends ChangeNotifier {
 
     _isReconnecting = true;
     _reconnectAttempt = 0;
-    _reconnectStartTime = DateTime.now();
     notifyListeners();
     debugPrint('[DEBUG] Starting reconnect with exponential backoff...');
     _tryReconnect();
@@ -246,18 +242,6 @@ class ChatNotifier extends ChangeNotifier {
   void _tryReconnect() {
     if (_intentionalDisconnect) {
       _cancelReconnect();
-      return;
-    }
-
-    // Check if we've exceeded max duration
-    if (_reconnectStartTime != null &&
-        DateTime.now().difference(_reconnectStartTime!).inSeconds >= _maxReconnectDuration) {
-      debugPrint('[DEBUG] Max reconnect duration exceeded, giving up');
-      _cancelReconnect();
-      // Don't call handleDisconnect again — we're already disconnected
-      // Just notify that reconnection failed
-      _disconnectReason = 'Could not reconnect to PC';
-      notifyListeners();
       return;
     }
 
@@ -317,11 +301,28 @@ class ChatNotifier extends ChangeNotifier {
     _reconnectTimer = null;
     _isReconnecting = false;
     _reconnectAttempt = 0;
-    _reconnectStartTime = null;
     notifyListeners();
   }
 
   int get reconnectAttempt => _reconnectAttempt;
+
+  // ─── Pending message flush (Phase 3) ─────────────────────────────────
+
+  void _flushPendingMessages() {
+    if (_pendingMessages.isEmpty) return;
+    debugPrint('[DEBUG] Flushing ${_pendingMessages.length} pending messages');
+    for (final msg in _pendingMessages) {
+      _sendJson({'type': 'text', 'content': msg.content});
+      // Update status to 'sent'
+      final idx = _messages.indexWhere((m) => m.id == msg.id);
+      if (idx >= 0) {
+        _messages[idx] = msg.copyWith(deliveryStatus: 'sent');
+      }
+    }
+    _pendingMessages.clear();
+    notifyListeners();
+    _saveMessages();
+  }
 
   // ─── Lifecycle ───────────────────────────────────────────────────────
 
@@ -336,6 +337,15 @@ class ChatNotifier extends ChangeNotifier {
       checkAndSendClipboard();
     } else {
       saveCurrentClipboard();
+      // Close WebSocket cleanly when backgrounded
+      if (_isConnected() && !_intentionalDisconnect) {
+        debugPrint('[DEBUG] App backgrounded — closing WebSocket with code 4000');
+        channel.sink.close(4000, 'app_backgrounded');
+        _isDisconnected = true;
+        _reconnectTimer?.cancel();
+        _reconnectTimer = null;
+        _isReconnecting = false;
+      }
     }
   }
 
@@ -357,9 +367,6 @@ class ChatNotifier extends ChangeNotifier {
   void _handleRawMessage(Map<String, dynamic> data) {
     final String msgType = data['type'] ?? '';
 
-    // Reset connection timeout on every inbound message (including pings)
-    _resetConnectionTimeout();
-
     // Handle ping — respond with pong (plaintext, before encrypted check)
     if (msgType == 'ping') {
       channel.sink.add(jsonEncode({'type': 'pong'}));
@@ -373,6 +380,7 @@ class ChatNotifier extends ChangeNotifier {
         _cancelReconnect();
       }
       _isDisconnected = false;
+      _flushPendingMessages();
       _handleKeyExchange(data['publicKey'] as String);
       return;
     }
@@ -424,30 +432,9 @@ class ChatNotifier extends ChangeNotifier {
         '[DEBUG] Key exchange complete — encrypted channel established',
       );
       notifyListeners();
-      // Start heartbeat timeout monitoring now that the connection is fully up
-      _resetConnectionTimeout();
     } catch (e) {
       debugPrint('[DEBUG] Key exchange failed: $e');
     }
-  }
-
-  /// Reset the connection timeout timer. Called on every inbound message.
-  /// If no message arrives within [_connectionTimeout] seconds, the
-  /// connection is considered dead and handleDisconnect is triggered.
-  void _resetConnectionTimeout() {
-    _lastMessageReceivedAt = DateTime.now();
-    _lastMessageTimer?.cancel();
-    _lastMessageTimer = Timer(
-      const Duration(seconds: _connectionTimeout),
-      () {
-        if (!_intentionalDisconnect && !_isDisconnected) {
-          debugPrint(
-            '[DEBUG] No message received for $_connectionTimeout seconds — connection dead',
-          );
-          handleDisconnect('Connection timed out');
-        }
-      },
-    );
   }
 
   Future<void> _handleEncryptedMessage(Map<String, dynamic> wrapper) async {
@@ -749,13 +736,22 @@ class ChatNotifier extends ChangeNotifier {
   // ─── Sending ─────────────────────────────────────────────────────────
 
   void sendText(String text) {
-    if (text.isNotEmpty && !_isDisconnected) {
+    if (text.isEmpty) return;
+
+    if (_isConnected()) {
       _sendJson({'type': 'text', 'content': text});
       _messages.add(Message.text(content: text, sender: 'Me'));
-      notifyListeners();
-      _saveMessages();
-      _scrollToBottom();
+    } else {
+      // Queue locally with pending status
+      final msg = Message.text(content: text, sender: 'Me')
+          .copyWith(deliveryStatus: 'pending');
+      _pendingMessages.add(msg);
+      _messages.add(msg);
+      debugPrint('[DEBUG] Queued pending message (${_pendingMessages.length} pending)');
     }
+    notifyListeners();
+    _saveMessages();
+    _scrollToBottom();
   }
 
   void _sendJson(Map<String, dynamic> data) {
@@ -1034,7 +1030,6 @@ class ChatNotifier extends ChangeNotifier {
     if (_isDisconnected) return;
     _isDisconnected = true;
 
-    _lastMessageTimer?.cancel();
     _reconnectTimer?.cancel(); // Cancel any in-progress reconnect
     _incomingFile?._cleanup();
     _incomingFile = null;
@@ -1055,7 +1050,6 @@ class ChatNotifier extends ChangeNotifier {
     _isDisconnected = true;
     _intentionalDisconnect = true;
 
-    _lastMessageTimer?.cancel();
     _incomingFile?._cleanup();
     _incomingFile = null;
     _keyExchangeTimeout?.cancel();
@@ -1127,7 +1121,6 @@ class ChatNotifier extends ChangeNotifier {
   @override
   void dispose() {
     _clipboardPollTimer?.cancel();
-    _lastMessageTimer?.cancel();
     _reconnectTimer?.cancel();
     _keyExchangeTimeout?.cancel();
     _incomingFile?._cleanup();

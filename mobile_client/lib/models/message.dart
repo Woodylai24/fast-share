@@ -18,6 +18,9 @@ class Message {
   final TransferState? transferState;
   final double transferProgress; // 0.0 to 1.0
 
+  // Delivery status for local message queue
+  final String deliveryStatus; // 'pending' | 'sent' | 'delivered'
+
   Message({
     String? id,
     required this.type,
@@ -28,6 +31,7 @@ class Message {
     DateTime? timestamp,
     this.transferState,
     this.transferProgress = 0.0,
+    this.deliveryStatus = 'sent',
   }) : id =
            id ??
            '${DateTime.now().millisecondsSinceEpoch}-${DateTime.now().microsecond}',
@@ -102,6 +106,7 @@ class Message {
     DateTime? timestamp,
     TransferState? transferState,
     double? transferProgress,
+    String? deliveryStatus,
   }) {
     return Message(
       id: id ?? this.id,
@@ -113,6 +118,7 @@ class Message {
       timestamp: timestamp ?? this.timestamp,
       transferState: transferState ?? this.transferState,
       transferProgress: transferProgress ?? this.transferProgress,
+      deliveryStatus: deliveryStatus ?? this.deliveryStatus,
     );
   }
 
@@ -125,6 +131,7 @@ class Message {
     'sender': sender,
     'filename': filename,
     'timestamp': timestamp.toIso8601String(),
+    'deliveryStatus': deliveryStatus,
     // Don't persist transfer state — completed transfers have null state
     // and in-progress transfers shouldn't be persisted mid-way
   };
@@ -141,6 +148,7 @@ class Message {
       timestamp: json['timestamp'] != null
           ? DateTime.parse(json['timestamp'] as String)
           : null,
+      deliveryStatus: (json['deliveryStatus'] as String?) ?? 'sent',
     );
   }
 
