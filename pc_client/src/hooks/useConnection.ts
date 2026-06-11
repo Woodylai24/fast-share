@@ -7,9 +7,14 @@ export function useConnection() {
     null,
   );
   const [selectedIp, setSelectedIp] = useState<string>("");
-  const [isConnected, setIsConnected] = useState(false);
+  // Connection state: 'no-paired' | 'paired-offline' | 'connected'
+  const [connectionState, setConnectionState] = useState<'no-paired' | 'paired-offline' | 'connected'>('no-paired');
+  const [pairedDevice, setPairedDevice] = useState<{ id: string; name: string; lastSeenAt: string } | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [lastConnected, setLastConnected] = useState<{ device: string; at: string } | null>(null);
+
+  // Derived value for backward compatibility
+  const isConnected = connectionState === 'connected';
 
   // Get connection info from Electron Main
   useEffect(() => {
@@ -23,6 +28,16 @@ export function useConnection() {
     });
 
     window.electronAPI.getLastConnected().then(setLastConnected);
+
+    // Check if any devices are already paired
+    window.electronAPI.getPairedDevices().then((devices) => {
+      const entries = Object.entries(devices);
+      if (entries.length > 0) {
+        const [id, info] = entries[0];
+        setPairedDevice({ id, name: info.name, lastSeenAt: info.lastSeenAt });
+        setConnectionState('paired-offline');
+      }
+    });
   }, []);
 
   // Listen for WS messages, disconnects, and file transfers
@@ -39,12 +54,28 @@ export function useConnection() {
         };
         setMessages((prev) => [...prev, newMessage]);
       } else if (data.type === "handshake") {
-        setIsConnected(true);
+        setConnectionState('connected');
         window.electronAPI.getLastConnected().then(setLastConnected);
+        window.electronAPI.getPairedDevices().then((devices) => {
+          const entries = Object.entries(devices);
+          if (entries.length > 0) {
+            const [id, info] = entries[0];
+            setPairedDevice({ id, name: info.name, lastSeenAt: info.lastSeenAt });
+          }
+        });
       } else if (data.type === "ping") {
         window.electronAPI.sendPong();
       } else if (data.type === "disconnect") {
-        setIsConnected(false);
+        window.electronAPI.getPairedDevices().then((devices) => {
+          const entries = Object.entries(devices);
+          if (entries.length > 0) {
+            const [id, info] = entries[0];
+            setPairedDevice({ id, name: info.name, lastSeenAt: info.lastSeenAt });
+            setConnectionState('paired-offline');
+          } else {
+            setConnectionState('no-paired');
+          }
+        });
       } else if (data.type === "image") {
         console.log(
           "[DEBUG] Image message received via WS, waiting for HTTP upload",
@@ -58,7 +89,16 @@ export function useConnection() {
 
     const cleanupWsDisconnect = window.electronAPI.onWsDisconnect(() => {
       console.log("[DEBUG] Disconnect event received");
-      setIsConnected(false);
+      window.electronAPI.getPairedDevices().then((devices) => {
+        const entries = Object.entries(devices);
+        if (entries.length > 0) {
+          const [id, info] = entries[0];
+          setPairedDevice({ id, name: info.name, lastSeenAt: info.lastSeenAt });
+          setConnectionState('paired-offline');
+        } else {
+          setConnectionState('no-paired');
+        }
+      });
       window.electronAPI.getLastConnected().then(setLastConnected);
     });
 
@@ -191,7 +231,7 @@ export function useConnection() {
 
   const disconnect = useCallback(() => {
     window.electronAPI.disconnectClient();
-    setIsConnected(false);
+    setConnectionState('no-paired');
   }, []);
 
   const getQrData = useCallback(() => {
@@ -208,7 +248,8 @@ export function useConnection() {
     selectedIp,
     setSelectedIp,
     isConnected,
-    setIsConnected,
+    connectionState,
+    pairedDevice,
     messages,
     setMessages,
     disconnect,

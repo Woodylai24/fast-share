@@ -198,7 +198,16 @@ export function MessageBubble({
         {!isMe && <div className="message-sender">{message.sender}</div>}
         {renderContent()}
         {showTimestamp && (
-          <div className="message-time">{formatTime(message.timestamp)}</div>
+          <div className="message-time">
+            {formatTime(message.timestamp)}
+            {isMe && message.deliveryStatus && (
+              <span className="delivery-status">
+                {message.deliveryStatus === 'pending' && <span className="tick-pending"> ⏳</span>}
+                {message.deliveryStatus === 'sent' && <span className="tick-sent"> ✓</span>}
+                {message.deliveryStatus === 'delivered' && <span className="tick-delivered"> ✓✓</span>}
+              </span>
+            )}
+          </div>
         )}
       </div>
     </>

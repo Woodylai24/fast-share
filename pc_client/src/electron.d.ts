@@ -63,6 +63,9 @@ export interface IElectronAPI {
   onPlayNotificationSound: (callback: () => void) => () => void;
   // Last connected device info
   getLastConnected: () => Promise<{ device: string; at: string }>;
+  // Paired device management
+  getPairedDevices: () => Promise<Record<string, { fcmToken: string; name: string; pairedAt: string; lastSeenAt: string }>>;
+  unpairDevice: (deviceId: string) => Promise<void>;
 }
 
 declare global {

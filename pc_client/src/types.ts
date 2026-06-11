@@ -23,6 +23,7 @@ export interface Message {
   filename?: string;
   transferState?: TransferState;
   transferProgress?: number; // 0-100
+  deliveryStatus?: 'pending' | 'sent' | 'delivered';
 }
 
 // Stored message interface for JSON parsing

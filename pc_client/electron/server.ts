@@ -8,9 +8,9 @@ import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { CryptoManager, isUnencryptedType } from "./crypto";
 import { processFileMessage, cleanupFileReassembly, FILE_CHUNK_SIZE } from "./file-transfer";
-import { deviceFcmTokens } from "./firebase";
 import { startClipboardSync } from "./clipboard-sync";
 import settingsStore from "./settings-store";
+import { pairDevice, updateDeviceLastSeen } from "./settings-store";
 
 // --- Configuration ---
 const WS_PORT = 8080;
@@ -237,7 +237,7 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
       `[DEBUG] HTTP Server running on http://${getLocalIp()}:${HTTP_PORT}`,
     );
     console.log(
-      "[DEBUG] HTTP Server listening on ALL interfaces (0.0.0.0):" + HTTP_PORT,
+      "DEBUG] HTTP Server listening on ALL interfaces (0.0.0.0):" + HTTP_PORT,
     );
   });
   console.log("[DEBUG] HTTP Server address:", httpServer.address());
@@ -298,13 +298,11 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
             settingsStore.set('lastConnectedDevice', data.deviceId || 'Unknown');
             settingsStore.set('lastConnectedAt', new Date().toISOString());
 
-            if (data.fcmToken) {
-              deviceFcmTokens.set(data.deviceId, data.fcmToken);
-              console.log(
-                "[DEBUG] Stored FCM token for device:",
-                data.deviceId,
-              );
-            }
+            // Persist device pairing (with FCM token if provided)
+            pairDevice(data.deviceId, {
+              fcmToken: data.fcmToken,
+              name: data.device || 'Unknown',
+            });
 
             // Send queued messages (they may be plaintext for legacy compat)
             const queuedMessages = getQueuedMessages(data.deviceId);
@@ -386,6 +384,12 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
                 }
               });
             }
+
+            // Update pairing info (FCM token may have rotated)
+            pairDevice(data.deviceId, {
+              fcmToken: data.fcmToken,
+              name: data.device || 'Unknown',
+            });
           }
           // Re-do key exchange on reconnect — send new public key
           const newClientInfo: ClientInfo = {
@@ -509,47 +513,22 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
       cleanupFileReassembly(clientInfo);
       connectedClients.delete(clientInfo);
 
+      // Update lastSeenAt for paired device
       if (clientInfo.deviceId) {
-        settingsStore.set('lastConnectedAt', new Date().toISOString());
+        updateDeviceLastSeen(clientInfo.deviceId);
       }
 
-      const isAbnormalClosure = code === 1006;
-      const isIntentionalDisconnect = code === 1000 || code === 1001;
-
-      if (!isAbnormalClosure) {
-        getMainWindow()?.webContents.send("ws-disconnect", {
-          reason: isIntentionalDisconnect
+      // Always notify renderer — no more special casing for 1006
+      const isIntentional = code === 1000 || code === 1001 || code === 4000;
+      getMainWindow()?.webContents.send("ws-disconnect", {
+        reason: code === 4000
+          ? "Mobile went to background"
+          : isIntentional
             ? "Connection closed"
             : `Connection lost (code: ${code})`,
-          deviceId: clientInfo.deviceId,
-        });
-      } else {
-        console.log(
-          "[DEBUG] Abnormal closure detected - mobile likely in background. Keeping UI connected.",
-        );
-        console.log(
-          "[DEBUG] Messages will be queued and sent via push notification.",
-        );
-
-        // Abnormal close — mobile likely in background or network dropped
-        // Queue messages for when they come back, but start a delayed notification
-        const clientId = clientInfo.deviceId;
-        setTimeout(() => {
-          // Check if this client has reconnected
-          let reconnected = false;
-          connectedClients.forEach((c) => {
-            if (c.deviceId === clientId) reconnected = true;
-          });
-          if (!reconnected) {
-            const mainWindow = getMainWindow();
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send("ws-disconnect", {
-                reason: "Mobile lost connection",
-              });
-            }
-          }
-        }, 60_000); // 60 seconds
-      }
+        deviceId: clientInfo.deviceId,
+        code,
+      });
     });
 
     ws.on("error", (error) => {

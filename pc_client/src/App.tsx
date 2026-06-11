@@ -49,6 +49,8 @@ function App() {
     selectedIp,
     setSelectedIp,
     isConnected,
+    connectionState,
+    pairedDevice,
     messages,
     setMessages,
     disconnect,
@@ -63,7 +65,7 @@ function App() {
     clearHistory,
     addSentFileMessage,
     messageListRef,
-  } = useMessages({ messages, setMessages });
+  } = useMessages({ messages, setMessages, isConnected });
 
   // Check API key
   const checkApiKey = useCallback(async () => {
@@ -237,33 +239,40 @@ function App() {
         )}
 
         <div className="card">
-          {connectionInfo ? (
+          {connectionInfo && connectionState !== 'connected' && (
             <QrCodeSection
               connectionInfo={connectionInfo}
               selectedIp={selectedIp}
               onIpChange={setSelectedIp}
               getQrData={getQrData}
             />
-          ) : (
+          )}
+          {!connectionInfo && (
             <p>Loading connection info...</p>
           )}
 
           <div
-            className={`status ${isConnected ? "connected" : "disconnected"}`}
+            className={`status ${
+              connectionState === 'connected' ? 'connected' : 
+              connectionState === 'paired-offline' ? 'paired-offline' : 
+              'disconnected'
+            }`}
           >
-            {isConnected
-              ? "Status: Mobile Connected"
-              : "Status: Waiting for connection..."}
+            {connectionState === 'connected' 
+              ? '● Connected' 
+              : connectionState === 'paired-offline'
+                ? `◉ Paired · Offline — ${pairedDevice?.name || 'Mobile'}`
+                : '○ Waiting for pairing...'}
           </div>
 
-          {!isConnected && lastConnected?.device && (
+          {connectionState === 'paired-offline' && lastConnected?.device && (
             <div style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginTop: "0.5rem", textAlign: "center" }}>
               Last connected: {lastConnected.device}, {formatRelativeTime(lastConnected.at)}
             </div>
           )}
         </div>
 
-        {isConnected && (
+        {(connectionState === 'connected' || connectionState === 'paired-offline') && (
           <div className="messages-area">
             <div className="messages-header">
               <h3>Activity Log</h3>
@@ -289,7 +298,7 @@ function App() {
           </div>
         )}
 
-        {isConnected && (
+        {(connectionState === 'connected' || connectionState === 'paired-offline') && (
           <div className="input-area">
             <input
               type="text"
@@ -299,12 +308,14 @@ function App() {
               onKeyDown={(e) => e.key === "Enter" && sendText()}
             />
             <button onClick={sendText}>Send</button>
-            <button
-              onClick={disconnect}
-              style={{ marginLeft: "0.5rem", backgroundColor: "#dc3545" }}
-            >
-              Disconnect
-            </button>
+            {connectionState === 'connected' && (
+              <button
+                onClick={disconnect}
+                style={{ marginLeft: "0.5rem", backgroundColor: "#dc3545" }}
+              >
+                Disconnect
+              </button>
+            )}
           </div>
         )}
 

@@ -5,9 +5,9 @@ import os from "os";
 import { WebSocket } from "ws";
 import { sendEncrypted, broadcastToClients, connectedClients, getLocalIp, getLocalIps, WS_PORT, HTTP_PORT, wss, queueMessage, stopHeartbeat } from "./server";
 import { sendFileEncrypted } from "./file-transfer";
-import { sendPushNotification, deviceFcmTokens } from "./firebase";
+import { sendPushNotification } from "./firebase";
 import { aiSettingsStore } from "./ai-summarize";
-import settingsStore from "./settings-store";
+import settingsStore, { getAllPairedDevices } from "./settings-store";
 import { app } from "electron";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -124,7 +124,16 @@ function registerIpcHandlers(
     };
   });
 
-  ipcMainInstance.on("send-text", (event, text) => {
+  ipcMainInstance.handle('get-paired-devices', () => {
+    return getAllPairedDevices();
+  });
+
+  ipcMainInstance.handle('unpair-device', (_event, deviceId: string) => {
+    const { removePairedDevice } = require('./settings-store');
+    removePairedDevice(deviceId);
+  });
+
+  ipcMainInstance.on("send-text", async (event, text) => {
     const message = { type: "text", content: text };
 
     // Send encrypted to all connected clients
@@ -142,14 +151,15 @@ function registerIpcHandlers(
 
     // If no clients connected, queue the message and send push notification
     if (!sent) {
-      deviceFcmTokens.forEach(async (fcmToken, deviceId) => {
+      const pairedDevices = getAllPairedDevices();
+      for (const [deviceId] of Object.entries(pairedDevices)) {
         queueMessage(deviceId, "text", message);
-        await sendPushNotification(fcmToken, {
+        await sendPushNotification(deviceId, {
           title: "New Message",
           body: text.length > 50 ? text.substring(0, 50) + "..." : text,
           data: { type: "text" },
         });
-      });
+      }
       console.log(
         "[DEBUG] No clients connected, text message queued and notification sent",
       );
@@ -206,7 +216,7 @@ function registerIpcHandlers(
     }
   });
 
-  ipcMainInstance.on("offer-file", (event, filePath, ip) => {
+  ipcMainInstance.on("offer-file", async (event, filePath, ip) => {
     const fileName = path.basename(filePath);
     const sharedDir = path.join(os.homedir(), "FastShare");
     if (!fs.existsSync(sharedDir)) fs.mkdirSync(sharedDir, { recursive: true });
@@ -264,14 +274,15 @@ function registerIpcHandlers(
 
     // If no clients connected, queue and send push notification
     if (!sentViaWs && !sentLegacy) {
-      deviceFcmTokens.forEach(async (fcmToken, deviceId) => {
+      const pairedDevices = getAllPairedDevices();
+      for (const [deviceId] of Object.entries(pairedDevices)) {
         queueMessage(deviceId, messageType, legacyMessage);
-        await sendPushNotification(fcmToken, {
+        await sendPushNotification(deviceId, {
           title: messageType === "image" ? "Image Received" : "File Received",
           body: fileName,
           data: { type: messageType, filename: fileName, url: fileUrl },
         });
-      });
+      }
       console.log(
         "[DEBUG] No clients connected, file offer queued and notification sent:",
         fileName,

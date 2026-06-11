@@ -129,4 +129,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   // Last connected device info
   getLastConnected: () => ipcRenderer.invoke('get-last-connected'),
+  // Paired device management
+  getPairedDevices: () => ipcRenderer.invoke('get-paired-devices'),
+  unpairDevice: (deviceId: string) => ipcRenderer.invoke('unpair-device', deviceId),
 });

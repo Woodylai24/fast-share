@@ -41,9 +41,10 @@ const MessageStorage = {
 interface UseMessagesOptions {
   messages: Message[];
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+  isConnected: boolean;
 }
 
-export function useMessages({ messages, setMessages }: UseMessagesOptions) {
+export function useMessages({ messages, setMessages, isConnected }: UseMessagesOptions) {
   const [inputText, setInputText] = useState("");
   const messageListRef = useRef<HTMLDivElement>(null);
 
@@ -70,6 +71,7 @@ export function useMessages({ messages, setMessages }: UseMessagesOptions) {
         content: inputText,
         sender: "Me",
         timestamp: new Date(),
+        deliveryStatus: isConnected ? 'delivered' : 'sent',
       };
       setMessages((prev) => [...prev, newMessage]);
       setInputText("");

@@ -1,6 +1,7 @@
 import path from "path";
 import fs from "fs";
 import admin from "firebase-admin";
+import { getPairedDeviceFcmToken } from "./settings-store";
 
 // --- Firebase Admin SDK Initialization ---
 
@@ -31,9 +32,6 @@ try {
   console.error("[DEBUG] Failed to initialize Firebase Admin SDK:", error);
 }
 
-// Map of device ID -> FCM token for push notifications
-const deviceFcmTokens: Map<string, string> = new Map();
-
 // --- Push Notification Function ---
 interface PushNotificationPayload {
   title: string;
@@ -42,9 +40,20 @@ interface PushNotificationPayload {
 }
 
 async function sendPushNotification(
-  fcmToken: string,
+  deviceId: string,
   payload: PushNotificationPayload,
 ): Promise<boolean> {
+  const fcmToken = getPairedDeviceFcmToken(deviceId);
+
+  if (!fcmToken) {
+    console.log(
+      "[DEBUG] No FCM token found for device:",
+      deviceId,
+      "— push notification skipped.",
+    );
+    return false;
+  }
+
   if (!firebaseInitialized) {
     console.log(
       "[DEBUG] Firebase not initialized. Push notification would be sent to:",
@@ -71,4 +80,4 @@ async function sendPushNotification(
   }
 }
 
-export { deviceFcmTokens, sendPushNotification };
+export { sendPushNotification };
