@@ -246,7 +246,15 @@ class ChatNotifier extends ChangeNotifier {
 
   bool _isConnected() {
     try {
-      return !_isDisconnected && channel.closeCode == null;
+      // Must NOT be reconnecting and key exchange must be complete.
+      // Without _keyExchangeComplete, _sendJson falls back to plaintext,
+      // which means messages sent during reconnect are unencrypted.
+      // Without !_isReconnecting, messages are sent over a half-open
+      // channel that hasn't completed the handshake yet.
+      return !_isDisconnected &&
+          !_isReconnecting &&
+          _keyExchangeComplete &&
+          channel.closeCode == null;
     } catch (e) {
       return false;
     }
