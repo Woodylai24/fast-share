@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 contextBridge.exposeInMainWorld("electronAPI", {
   getConnectionInfo: () => ipcRenderer.invoke("get-connection-info"),
-  sendText: (text: string) => ipcRenderer.send("send-text", text),
+  sendText: (text: string, messageId: string) => ipcRenderer.send("send-text", text, messageId),
   sendPong: () => ipcRenderer.send("send-pong"),
   disconnectClient: () => ipcRenderer.send("disconnect-client"),
   offerFile: (filePath: string, ip: string) =>
@@ -132,4 +132,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Paired device management
   getPairedDevices: () => ipcRenderer.invoke('get-paired-devices'),
   unpairDevice: (deviceId: string) => ipcRenderer.invoke('unpair-device', deviceId),
+  // Delivery status (ACK) updates from main process
+  onDeliveryStatus: (callback: (data: { messageId: string; status: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: { messageId: string; status: string }) => callback(value);
+    ipcRenderer.on("delivery-status", listener);
+    return () => ipcRenderer.removeListener("delivery-status", listener);
+  },
 });

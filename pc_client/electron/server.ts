@@ -18,6 +18,7 @@ const HTTP_PORT = 8081;
 const KEY_EXCHANGE_TIMEOUT_MS = 5000; // 5 seconds
 const PING_INTERVAL = 30_000; // 30 seconds
 const PONG_TIMEOUT = 10_000; // 10 seconds to respond
+const ACK_TIMEOUT_MS = 15_000; // 15 seconds to wait for message ACK
 
 // --- Client Tracking ---
 interface ClientInfo {
@@ -104,6 +105,80 @@ function getQueuedMessages(deviceId: string): QueuedMessage[] {
   const messages = messageQueue.get(deviceId) || [];
   messageQueue.delete(deviceId);
   return messages;
+}
+
+// --- Message ACK Tracking ---
+// When a message is sent over WebSocket, we track it here. If no ACK
+// arrives within ACK_TIMEOUT_MS, the message is queued + pushed via FCM.
+interface PendingAck {
+  timer: ReturnType<typeof setTimeout>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  message: any;
+  deviceId: string;
+}
+
+const pendingAcks: Map<string, PendingAck> = new Map();
+const MAX_RECENT_IDS = 200;
+const recentMessageIds: Set<string> = new Set();
+
+function generateMessageId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+type GetMainWindowFnForAck = () => { webContents: { send: (channel: string, ...args: unknown[]) => void } } | null;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function trackPendingAck(messageId: string, message: any, deviceId: string, getMainWindow?: GetMainWindowFnForAck) {
+  // Clear any existing entry for this messageId (shouldn't happen normally)
+  clearPendingAck(messageId);
+
+  const timer = setTimeout(() => {
+    handleAckTimeout(messageId, getMainWindow);
+  }, ACK_TIMEOUT_MS);
+
+  pendingAcks.set(messageId, { timer, message, deviceId });
+}
+
+function clearPendingAck(messageId: string) {
+  const entry = pendingAcks.get(messageId);
+  if (entry) {
+    clearTimeout(entry.timer);
+    pendingAcks.delete(messageId);
+  }
+}
+
+function handleAckTimeout(messageId: string, getMainWindow?: GetMainWindowFnForAck) {
+  const entry = pendingAcks.get(messageId);
+  if (!entry) return; // Already cleared (ACK received)
+
+  pendingAcks.delete(messageId);
+  const { message, deviceId } = entry;
+  console.log(`[DEBUG] ACK timeout for message ${messageId} — queuing + pushing`);
+
+  // Queue for next reconnect
+  queueMessage(deviceId, message.type || "text", message);
+
+  // Send FCM push notification
+  const { sendPushNotification } = require("./firebase");
+  const text = typeof message.content === "string" ? message.content : "New message";
+  sendPushNotification(deviceId, {
+    title: "New Message",
+    body: text.length > 50 ? text.substring(0, 50) + "..." : text,
+    data: { type: message.type || "text" },
+  }).catch((err: unknown) => console.error("[DEBUG] Push notification failed:", err));
+
+  // Notify renderer — message stays at 'sent' (queued, will deliver on reconnect)
+  // The UI already shows 'sent', no status change needed
+  void getMainWindow;
+}
+
+function addRecentMessageId(messageId: string) {
+  if (recentMessageIds.size >= MAX_RECENT_IDS) {
+    // Remove oldest entry (Sets iterate in insertion order)
+    const oldest = recentMessageIds.values().next().value;
+    if (oldest) recentMessageIds.delete(oldest);
+  }
+  recentMessageIds.add(messageId);
 }
 
 // --- Encrypt and send to a single client ---
@@ -304,21 +379,8 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
               name: data.device || 'Unknown',
             });
 
-            // Send queued messages (they may be plaintext for legacy compat)
-            const queuedMessages = getQueuedMessages(data.deviceId);
-            if (queuedMessages.length > 0) {
-              console.log(
-                "[DEBUG] Sending",
-                queuedMessages.length,
-                "queued messages to device",
-              );
-              // Queued messages are sent as plaintext since key exchange isn't done yet
-              queuedMessages.forEach((msg) => {
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify(msg.data));
-                }
-              });
-            }
+            // Queued messages are flushed after key exchange completes
+            // (see key-exchange handler below)
           }
 
           // Respond with handshake + our public key for key exchange
@@ -360,6 +422,33 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
             console.log("[DEBUG] Key exchange complete — encrypted channel established");
             // Start heartbeat now that the connection is fully established
             startHeartbeat(clientInfo);
+
+            // Flush queued messages now that encryption is established.
+            // Previously these were sent as plaintext during handshake/reconnect
+            // (before key exchange), which meant mobile couldn't decrypt them.
+            // Now they're sent encrypted + tracked with ACKs.
+            if (clientInfo.deviceId) {
+              const queuedMessages = getQueuedMessages(clientInfo.deviceId);
+              if (queuedMessages.length > 0) {
+                console.log(
+                  "[DEBUG] Sending",
+                  queuedMessages.length,
+                  "queued messages after key exchange",
+                );
+                queuedMessages.forEach((msg) => {
+                  sendEncrypted(clientInfo, msg.data);
+                  // Track ACK if messageId is present
+                  if (msg.data?.messageId) {
+                    trackPendingAck(
+                      msg.data.messageId,
+                      msg.data,
+                      clientInfo.deviceId!,
+                      getMainWindow,
+                    );
+                  }
+                });
+              }
+            }
           } catch (error) {
             console.error("[DEBUG] Key exchange failed:", error);
             ws.close(4002, "Key exchange failed");
@@ -371,19 +460,6 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
           console.log("[DEBUG] Client reconnecting, device ID:", data.deviceId);
           if (data.deviceId) {
             clientInfo.deviceId = data.deviceId;
-            const queuedMessages = getQueuedMessages(data.deviceId);
-            if (queuedMessages.length > 0) {
-              console.log(
-                "[DEBUG] Sending",
-                queuedMessages.length,
-                "queued messages on reconnect",
-              );
-              queuedMessages.forEach((msg) => {
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify(msg.data));
-                }
-              });
-            }
 
             // Update pairing info — only refresh FCM token, don't overwrite name.
             // The name is set during initial handshake. Reconnect doesn't send it,
@@ -446,6 +522,17 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
           return;
         }
 
+        // --- Unencrypted: message-ack (delivery confirmation) ---
+        if (data.type === "message-ack") {
+          console.log("[DEBUG] Received ACK for message:", data.messageId);
+          clearPendingAck(data.messageId);
+          getMainWindow()?.webContents.send("delivery-status", {
+            messageId: data.messageId,
+            status: "delivered",
+          });
+          return;
+        }
+
         if (data.type === "pong") {
           clientInfo.pongPending = false;
           if (clientInfo.pongTimeout) {
@@ -488,6 +575,20 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const inner = decrypted as any;
           console.log("[DEBUG] Decrypted inner message type:", inner.type);
+
+          // --- Send ACK back to mobile (delivery confirmation) ---
+          if (inner.messageId) {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "message-ack", messageId: inner.messageId }));
+              console.log("[DEBUG] Sent ACK for message:", inner.messageId);
+            }
+            // Dedup: skip processing if we've already seen this message
+            if (recentMessageIds.has(inner.messageId)) {
+              console.log("[DEBUG] Duplicate message, skipping processing:", inner.messageId);
+              return;
+            }
+            addRecentMessageId(inner.messageId);
+          }
 
           // Process the decrypted inner message
           processFileMessage(clientInfo, inner, getMainWindow);
@@ -563,6 +664,9 @@ export {
   broadcastToClients,
   queueMessage,
   stopHeartbeat,
+  generateMessageId,
+  trackPendingAck,
+  clearPendingAck,
   wss,
   WS_PORT,
   HTTP_PORT,

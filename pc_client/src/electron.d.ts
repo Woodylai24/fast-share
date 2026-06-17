@@ -14,7 +14,7 @@ export interface IElectronAPI {
     wsPort: number;
     httpPort: number;
   }>;
-  sendText: (text: string) => void;
+  sendText: (text: string, messageId: string) => void;
   sendPong: () => void;
   disconnectClient: () => void;
   offerFile: (filePath: string, ip: string) => void;
@@ -66,6 +66,7 @@ export interface IElectronAPI {
   // Paired device management
   getPairedDevices: () => Promise<Record<string, { fcmToken: string; name: string; pairedAt: string; lastSeenAt: string }>>;
   unpairDevice: (deviceId: string) => Promise<void>;
+  onDeliveryStatus: (callback: (data: { messageId: string; status: string }) => void) => () => void;
 }
 
 declare global {

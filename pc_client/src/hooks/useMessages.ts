@@ -64,14 +64,15 @@ export function useMessages({ messages, setMessages, isConnected }: UseMessagesO
 
   const sendText = () => {
     if (inputText.trim()) {
-      window.electronAPI.sendText(inputText);
+      const messageId = generateId();
+      window.electronAPI.sendText(inputText, messageId);
       const newMessage: Message = {
-        id: generateId(),
+        id: messageId,
         type: MessageType.TEXT,
         content: inputText,
         sender: "Me",
         timestamp: new Date(),
-        deliveryStatus: isConnected ? 'delivered' : 'sent',
+        deliveryStatus: 'sent', // upgrades to 'delivered' when ACK arrives
       };
       setMessages((prev) => [...prev, newMessage]);
       setInputText("");

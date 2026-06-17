@@ -119,12 +119,15 @@ class CryptoService {
   }
 }
 
-/// Message types that are sent unencrypted (pre-key-exchange).
+/// Message types that are sent unencrypted (pre-key-exchange or control messages).
 const Set<String> unencryptedTypes = {
   'handshake',
   'key-exchange',
   'reconnect',
   'disconnect',
+  'ping',
+  'pong',
+  'message-ack',
 };
 
 /// Check if a message type should be sent unencrypted.

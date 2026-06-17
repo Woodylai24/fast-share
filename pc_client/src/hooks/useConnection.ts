@@ -218,6 +218,19 @@ export function useConnection() {
         );
       });
 
+    // --- Delivery status (ACK) updates ---
+    // When the server receives a message-ack from mobile, it notifies the
+    // renderer to upgrade the message from 'sent' (✓) to 'delivered' (✓✓).
+    const cleanupDeliveryStatus = window.electronAPI.onDeliveryStatus((data) => {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === data.messageId
+            ? { ...msg, deliveryStatus: data.status as "sent" | "delivered" }
+            : msg
+        )
+      );
+    });
+
     return () => {
       cleanupWsMessage();
       cleanupWsDisconnect();
@@ -226,6 +239,7 @@ export function useConnection() {
       cleanupFileReceived();
       cleanupFileSentStart();
       cleanupFileSentComplete();
+      cleanupDeliveryStatus();
     };
   }, [connectionInfo?.httpPort]);
 

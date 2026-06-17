@@ -127,6 +127,15 @@ class ChatNotifier extends ChangeNotifier {
   // Pending message queue (Phase 3)
   final List<Message> _pendingMessages = [];
 
+  // Message ACK tracking (two-way delivery confirmation)
+  // Maps messageId → timer. When the timer fires, the message was not
+  // acknowledged → connection is dead → move to pending queue.
+  final Map<String, Timer> _pendingAcks = {};
+  static const Duration _ackTimeout = Duration(seconds: 15);
+  // Dedup: tracks recently seen incoming messageIds
+  final Set<String> _recentMessageIds = {};
+  static const int _maxRecentIds = 200;
+
   // Scroll control (exposed for the widget to use)
   final ScrollController scrollController = ScrollController();
 
@@ -366,18 +375,91 @@ class ChatNotifier extends ChangeNotifier {
 
   int get reconnectAttempt => _reconnectAttempt;
 
+  // ─── Message ACK helpers ────────────────────────────────────────────
+
+  String _generateMessageId() {
+    return '${DateTime.now().millisecondsSinceEpoch}-${DateTime.now().microsecond}';
+  }
+
+  /// Track an outgoing message. If no ACK arrives within 15s, the
+  /// connection is dead — move the message to the pending queue and
+  /// trigger disconnect.
+  void _trackPendingAck(String messageId) {
+    _pendingAcks.remove(messageId)?.cancel();
+    _pendingAcks[messageId] = Timer(_ackTimeout, () {
+      _handleAckTimeout(messageId);
+    });
+  }
+
+  /// Called when the PC acknowledges receipt of our message.
+  void _handleAckReceived(String messageId) {
+    _pendingAcks.remove(messageId)?.cancel();
+    debugPrint('[DEBUG] ACK received for message: $messageId');
+    final idx = _messages.indexWhere((m) => m.id == messageId);
+    if (idx >= 0) {
+      _messages[idx] = _messages[idx].copyWith(deliveryStatus: 'delivered');
+      notifyListeners();
+      _saveMessages();
+    }
+  }
+
+  /// Called when the ACK timer fires — message was not acknowledged.
+  /// The connection is likely dead.
+  void _handleAckTimeout(String messageId) {
+    _pendingAcks.remove(messageId);
+    debugPrint('[DEBUG] ACK timeout for message: $messageId');
+
+    final idx = _messages.indexWhere((m) => m.id == messageId);
+    if (idx >= 0) {
+      final msg = _messages[idx];
+      if (msg.deliveryStatus == 'sent') {
+        _messages[idx] = msg.copyWith(deliveryStatus: 'pending');
+        _pendingMessages.add(msg.copyWith(deliveryStatus: 'pending'));
+      }
+    }
+    notifyListeners();
+
+    // Connection is dead — trigger disconnect + reconnect
+    if (!_isDisconnected) {
+      handleDisconnect('Connection lost (message not acknowledged)');
+    }
+  }
+
+  /// Cancel all pending ACK timers and move unacked 'sent' messages to the
+  /// pending queue for retransmission. Called on disconnect, background, and dispose.
+  void _cancelAllPendingAcks() {
+    for (final messageId in _pendingAcks.keys.toList()) {
+      _pendingAcks[messageId]?.cancel();
+      final idx = _messages.indexWhere((m) => m.id == messageId);
+      if (idx >= 0 && _messages[idx].deliveryStatus == 'sent') {
+        _messages[idx] = _messages[idx].copyWith(deliveryStatus: 'pending');
+        _pendingMessages.add(_messages[idx]);
+      }
+    }
+    _pendingAcks.clear();
+  }
+
+  /// Add a messageId to the dedup set, capping the set size.
+  void _addRecentMessageId(String messageId) {
+    if (_recentMessageIds.length >= _maxRecentIds) {
+      _recentMessageIds.remove(_recentMessageIds.first);
+    }
+    _recentMessageIds.add(messageId);
+  }
+
   // ─── Pending message flush (Phase 3) ─────────────────────────────────
 
   void _flushPendingMessages() {
     if (_pendingMessages.isEmpty) return;
     debugPrint('[DEBUG] Flushing ${_pendingMessages.length} pending messages');
     for (final msg in _pendingMessages) {
-      _sendJson({'type': 'text', 'content': msg.content});
-      // Update status to 'sent'
+      _sendJson({'type': 'text', 'content': msg.content, 'messageId': msg.id});
+      // Update status to 'sent' and track ACK
       final idx = _messages.indexWhere((m) => m.id == msg.id);
       if (idx >= 0) {
         _messages[idx] = msg.copyWith(deliveryStatus: 'sent');
       }
+      _trackPendingAck(msg.id);
     }
     _pendingMessages.clear();
     notifyListeners();
@@ -418,6 +500,9 @@ class ChatNotifier extends ChangeNotifier {
         _reconnectTimer = null;
         _isReconnecting = false;
         _watchdogTimer?.cancel();
+        // Cancel pending ACKs and move unacked messages to pending queue.
+        // They'll be re-sent when the app returns to foreground.
+        _cancelAllPendingAcks();
         channel.sink.close(4000, 'app_backgrounded');
       }
     }
@@ -455,8 +540,9 @@ class ChatNotifier extends ChangeNotifier {
         _cancelReconnect();
       }
       _isDisconnected = false;
-      _flushPendingMessages();
       _handleKeyExchange(data['publicKey'] as String);
+      // _flushPendingMessages is called from _handleKeyExchange after
+      // key exchange completes, so messages are sent encrypted.
       return;
     }
 
@@ -467,6 +553,15 @@ class ChatNotifier extends ChangeNotifier {
       }
       _isDisconnected = false;
       _reconnectAttempt = 0;
+      return;
+    }
+
+    // --- ACK from PC (delivery confirmation for messages we sent) ---
+    if (msgType == 'message-ack') {
+      final messageId = data['messageId'] as String?;
+      if (messageId != null) {
+        _handleAckReceived(messageId);
+      }
       return;
     }
 
@@ -507,6 +602,12 @@ class ChatNotifier extends ChangeNotifier {
       debugPrint(
         '[DEBUG] Key exchange complete — encrypted channel established',
       );
+
+      // Flush pending messages now that encryption is established.
+      // Previously this was called before _handleKeyExchange, which sent
+      // messages as plaintext (keyExchangeComplete was still false).
+      _flushPendingMessages();
+
       _startWatchdog();
       notifyListeners();
     } catch (e) {
@@ -536,6 +637,20 @@ class ChatNotifier extends ChangeNotifier {
     final String msgType = data['type'] ?? 'text';
 
     if (_isDisconnected) return;
+
+    // --- Send ACK back to PC for delivery confirmation ---
+    final messageId = data['messageId'] as String?;
+    if (messageId != null) {
+      // Dedup: skip if already processed (original arrived but ACK was lost)
+      if (_recentMessageIds.contains(messageId)) {
+        debugPrint('[DEBUG] Duplicate message, re-ACKing without processing: $messageId');
+        _sendJson({'type': 'message-ack', 'messageId': messageId});
+        return;
+      }
+      _addRecentMessageId(messageId);
+      _sendJson({'type': 'message-ack', 'messageId': messageId});
+      debugPrint('[DEBUG] Sent ACK for message: $messageId');
+    }
 
     switch (msgType) {
       case 'text':
@@ -816,14 +931,18 @@ class ChatNotifier extends ChangeNotifier {
 
   void sendText(String text) {
     if (text.isEmpty) return;
+    final messageId = _generateMessageId();
 
     if (_isConnected()) {
-      _sendJson({'type': 'text', 'content': text});
-      _messages.add(Message.text(content: text, sender: 'Me'));
+      _sendJson({'type': 'text', 'content': text, 'messageId': messageId});
+      final msg = Message.text(content: text, sender: 'Me')
+          .copyWith(id: messageId, deliveryStatus: 'sent');
+      _messages.add(msg);
+      _trackPendingAck(messageId);
     } else {
       // Queue locally with pending status
       final msg = Message.text(content: text, sender: 'Me')
-          .copyWith(deliveryStatus: 'pending');
+          .copyWith(id: messageId, deliveryStatus: 'pending');
       _pendingMessages.add(msg);
       _messages.add(msg);
       debugPrint('[DEBUG] Queued pending message (${_pendingMessages.length} pending)');
@@ -1115,6 +1234,12 @@ class ChatNotifier extends ChangeNotifier {
     _incomingFile = null;
     _keyExchangeTimeout?.cancel();
 
+    // Cancel pending ACK timers and move unacked messages to pending queue.
+    // These messages were sent but never confirmed — the connection is dead,
+    // so they'll be re-sent on reconnect. Dedup on the PC side prevents
+    // duplicates if the original message actually arrived.
+    _cancelAllPendingAcks();
+
     channel.sink.close();
     _disconnectReason = _friendlyDisconnectReason(reason);
     notifyListeners();
@@ -1130,6 +1255,7 @@ class ChatNotifier extends ChangeNotifier {
     _isDisconnected = true;
     _intentionalDisconnect = true;
 
+    _cancelAllPendingAcks();
     _incomingFile?._cleanup();
     _incomingFile = null;
     _keyExchangeTimeout?.cancel();
@@ -1164,14 +1290,22 @@ class ChatNotifier extends ChangeNotifier {
     ShareHandler.setupListener();
 
     ShareHandler.registerSendCallback((data) {
-      _sendJson(data);
+      // Add messageId for ACK tracking on text messages
       if (data['type'] == 'text' && data['content'] != null) {
-        _messages.add(
-          Message.text(content: data['content'] as String, sender: 'Me'),
-        );
+        final messageId = _generateMessageId();
+        data['messageId'] = messageId;
+        _sendJson(data);
+        final msg = Message.text(
+          content: data['content'] as String, sender: 'Me',
+        ).copyWith(id: messageId, deliveryStatus: 'sent');
+        _messages.add(msg);
+        _trackPendingAck(messageId);
         notifyListeners();
         _saveMessages();
         _scrollToBottom();
+      } else {
+        // Non-text shares (files, etc.) — no ACK tracking
+        _sendJson(data);
       }
     });
 
@@ -1200,6 +1334,7 @@ class ChatNotifier extends ChangeNotifier {
 
   @override
   void dispose() {
+    _cancelAllPendingAcks();
     _clipboardPollTimer?.cancel();
     _reconnectTimer?.cancel();
     _keyExchangeTimeout?.cancel();
