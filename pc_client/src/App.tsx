@@ -49,7 +49,7 @@ function App() {
     selectedIp,
     setSelectedIp,
     isConnected,
-    connectionState,
+    hasPairedDevice,
     pairedDevice,
     messages,
     setMessages,
@@ -239,7 +239,7 @@ function App() {
         )}
 
         <div className="card">
-          {connectionInfo && connectionState !== 'connected' && (
+          {connectionInfo && !isConnected && (
             <QrCodeSection
               connectionInfo={connectionInfo}
               selectedIp={selectedIp}
@@ -253,26 +253,26 @@ function App() {
 
           <div
             className={`status ${
-              connectionState === 'connected' ? 'connected' : 
-              connectionState === 'paired-offline' ? 'paired-offline' : 
+              isConnected ? 'connected' :
+              hasPairedDevice ? 'paired-offline' :
               'disconnected'
             }`}
           >
-            {connectionState === 'connected' 
-              ? '● Connected' 
-              : connectionState === 'paired-offline'
+            {isConnected
+              ? '● Connected'
+              : hasPairedDevice
                 ? `◉ Paired · Offline — ${pairedDevice?.name || 'Mobile'}`
                 : '○ Waiting for pairing...'}
           </div>
 
-          {connectionState === 'paired-offline' && lastConnected?.device && (
+          {hasPairedDevice && !isConnected && lastConnected?.device && (
             <div style={{ color: "var(--text-secondary)", fontSize: "0.85rem", marginTop: "0.5rem", textAlign: "center" }}>
               Last connected: {lastConnected.device}, {formatRelativeTime(lastConnected.at)}
             </div>
           )}
         </div>
 
-        {(connectionState === 'connected' || connectionState === 'paired-offline') && (
+        {hasPairedDevice && (
           <div className="messages-area">
             <div className="messages-header">
               <h3>Activity Log</h3>
@@ -298,7 +298,7 @@ function App() {
           </div>
         )}
 
-        {(connectionState === 'connected' || connectionState === 'paired-offline') && (
+        {hasPairedDevice && (
           <div className="input-area">
             <input
               type="text"
@@ -308,7 +308,7 @@ function App() {
               onKeyDown={(e) => e.key === "Enter" && sendText()}
             />
             <button onClick={sendText}>Send</button>
-            {connectionState === 'connected' && (
+            {isConnected && (
               <button
                 onClick={disconnect}
                 style={{ marginLeft: "0.5rem", backgroundColor: "#dc3545" }}

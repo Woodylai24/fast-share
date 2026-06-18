@@ -8,6 +8,7 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
   final VoidCallback onDisconnect;
   final VoidCallback onPickFile;
   final VoidCallback onClearHistory;
+  final VoidCallback? onUnpair;
   final bool isDisconnected;
   final ThemeNotifier themeNotifier;
 
@@ -17,6 +18,7 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
     required this.onDisconnect,
     required this.onPickFile,
     required this.onClearHistory,
+    this.onUnpair,
     this.isDisconnected = false,
     required this.themeNotifier,
   });
@@ -67,6 +69,26 @@ class ChatAppBar extends StatelessWidget implements PreferredSizeWidget {
           tooltip: 'Clear History',
           onPressed: onClearHistory,
         ),
+        // Overflow menu (Change PC / Unpair)
+        if (onUnpair != null)
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'More',
+            onSelected: (value) {
+              if (value == 'unpair') onUnpair!();
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem<String>(
+                value: 'unpair',
+                child: ListTile(
+                  leading: Icon(Icons.link_off),
+                  title: Text('Change PC / Unpair'),
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
+          ),
       ],
     );
   }

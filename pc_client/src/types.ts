@@ -24,6 +24,10 @@ export interface Message {
   transferState?: TransferState;
   transferProgress?: number; // 0-100
   deliveryStatus?: 'pending' | 'sent' | 'delivered';
+  // Forward-compatible fields for future multi-device support (#32).
+  // Null/undefined means "the one paired device" (current 1:1 behavior).
+  recipientId?: string;
+  senderId?: string;
 }
 
 // Stored message interface for JSON parsing

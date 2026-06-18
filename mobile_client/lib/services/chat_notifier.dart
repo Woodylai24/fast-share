@@ -73,6 +73,16 @@ class ChatNotifier extends ChangeNotifier {
   bool _isReconnecting = false;
   bool get isReconnecting => _isReconnecting;
 
+  /// True once the first connection has been fully established (key exchange
+  /// complete). Used to distinguish the very first connect attempt from later
+  /// reconnects so the UI can show a distinct "Connecting to PC…" state.
+  bool _everConnected = false;
+
+  /// True while the first connection attempt is in progress (before the first
+  /// successful connection). Drives the WhatsApp-like "Connecting to PC…"
+  /// banner shown on launch.
+  bool get isInitialConnecting => !_everConnected && !_intentionalDisconnect;
+
   /// Whether the reconnect/disconnect banner should be visible.
   /// Suppresses both banners on the first reconnect attempt (e.g. returning
   /// from background) so the user doesn't see a flash before the connection
@@ -595,6 +605,7 @@ class ChatNotifier extends ChangeNotifier {
     try {
       await _crypto.computeSharedSecret(serverPublicKey);
       _keyExchangeComplete = true;
+      _everConnected = true;
       _keyExchangeTimeout?.cancel();
 
       final ourPublicKey = await _crypto.getPublicKeyBase64();

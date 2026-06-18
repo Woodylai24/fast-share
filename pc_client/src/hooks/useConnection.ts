@@ -7,16 +7,18 @@ export function useConnection() {
     null,
   );
   const [selectedIp, setSelectedIp] = useState<string>("");
-  // Connection state: 'no-paired' | 'paired-offline' | 'connected'
-  const [connectionState, setConnectionState] = useState<'no-paired' | 'paired-offline' | 'connected'>('no-paired');
+
+  // Two independent booleans — single source of truth for each concern.
+  // hasPairedDevice: identity (loaded once, updated only on pair/unpair)
+  // isConnected: transport (set directly by WS events, no async queries)
+  const [hasPairedDevice, setHasPairedDevice] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
   const [pairedDevice, setPairedDevice] = useState<{ id: string; name: string; lastSeenAt: string } | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [lastConnected, setLastConnected] = useState<{ device: string; at: string } | null>(null);
 
-  // Derived value for backward compatibility
-  const isConnected = connectionState === 'connected';
-
-  // Get connection info from Electron Main
+  // Get connection info and initial paired-device state from Electron Main.
+  // These run ONCE on mount — no async queries inside event handlers.
   useEffect(() => {
     window.electronAPI.getConnectionInfo().then((info) => {
       setConnectionInfo(info);
@@ -29,18 +31,20 @@ export function useConnection() {
 
     window.electronAPI.getLastConnected().then(setLastConnected);
 
-    // Check if any devices are already paired
+    // Load paired device state ONCE — this is the only place we query it.
+    // Subsequent updates come from WS events, not async queries.
     window.electronAPI.getPairedDevices().then((devices) => {
       const entries = Object.entries(devices);
       if (entries.length > 0) {
         const [id, info] = entries[0];
         setPairedDevice({ id, name: info.name, lastSeenAt: info.lastSeenAt });
-        setConnectionState('paired-offline');
+        setHasPairedDevice(true);
       }
     });
   }, []);
 
-  // Listen for WS messages, disconnects, and file transfers
+  // Listen for WS messages, disconnects, and file transfers.
+  // State transitions are SYNCHRONOUS — no async getPairedDevices() calls.
   useEffect(() => {
     const cleanupWsMessage = window.electronAPI.onWsMessage((data) => {
       if (data.type === "text") {
@@ -54,28 +58,14 @@ export function useConnection() {
         };
         setMessages((prev) => [...prev, newMessage]);
       } else if (data.type === "handshake") {
-        setConnectionState('connected');
+        // Connection established — direct, no async query
+        setIsConnected(true);
         window.electronAPI.getLastConnected().then(setLastConnected);
-        window.electronAPI.getPairedDevices().then((devices) => {
-          const entries = Object.entries(devices);
-          if (entries.length > 0) {
-            const [id, info] = entries[0];
-            setPairedDevice({ id, name: info.name, lastSeenAt: info.lastSeenAt });
-          }
-        });
       } else if (data.type === "ping") {
         window.electronAPI.sendPong();
       } else if (data.type === "disconnect") {
-        window.electronAPI.getPairedDevices().then((devices) => {
-          const entries = Object.entries(devices);
-          if (entries.length > 0) {
-            const [id, info] = entries[0];
-            setPairedDevice({ id, name: info.name, lastSeenAt: info.lastSeenAt });
-            setConnectionState('paired-offline');
-          } else {
-            setConnectionState('no-paired');
-          }
-        });
+        // Mobile went to background — connection lost
+        setIsConnected(false);
       } else if (data.type === "image") {
         console.log(
           "[DEBUG] Image message received via WS, waiting for HTTP upload",
@@ -88,17 +78,8 @@ export function useConnection() {
     });
 
     const cleanupWsDisconnect = window.electronAPI.onWsDisconnect(() => {
-      console.log("[DEBUG] Disconnect event received");
-      window.electronAPI.getPairedDevices().then((devices) => {
-        const entries = Object.entries(devices);
-        if (entries.length > 0) {
-          const [id, info] = entries[0];
-          setPairedDevice({ id, name: info.name, lastSeenAt: info.lastSeenAt });
-          setConnectionState('paired-offline');
-        } else {
-          setConnectionState('no-paired');
-        }
-      });
+      // Connection lost — direct, no async query
+      setIsConnected(false);
       window.electronAPI.getLastConnected().then(setLastConnected);
     });
 
@@ -219,8 +200,6 @@ export function useConnection() {
       });
 
     // --- Delivery status (ACK) updates ---
-    // When the server receives a message-ack from mobile, it notifies the
-    // renderer to upgrade the message from 'sent' (✓) to 'delivered' (✓✓).
     const cleanupDeliveryStatus = window.electronAPI.onDeliveryStatus((data) => {
       setMessages((prev) =>
         prev.map((msg) =>
@@ -245,7 +224,7 @@ export function useConnection() {
 
   const disconnect = useCallback(() => {
     window.electronAPI.disconnectClient();
-    setConnectionState('no-paired');
+    setIsConnected(false);
   }, []);
 
   const getQrData = useCallback(() => {
@@ -262,7 +241,7 @@ export function useConnection() {
     selectedIp,
     setSelectedIp,
     isConnected,
-    connectionState,
+    hasPairedDevice,
     pairedDevice,
     messages,
     setMessages,

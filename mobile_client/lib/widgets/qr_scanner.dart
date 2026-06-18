@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:fast_share_mobile/screens/connecting_screen.dart';
+import 'package:fast_share_mobile/screens/chat_screen.dart';
+import 'package:fast_share_mobile/services/settings_service.dart';
 import 'package:fast_share_mobile/services/theme_notifier.dart';
 
 class ScannerScreen extends StatefulWidget {
@@ -29,19 +30,29 @@ class _ScannerScreenState extends State<ScannerScreen> {
               try {
                 final data = jsonDecode(barcode.rawValue!);
                 if (data['ip'] != null && data['port'] != null) {
+                  final ip = data['ip'] as String;
+                  final port = (data['port'] as num).toInt();
+                  final httpPort = (data['httpPort'] as num?)?.toInt() ?? 8081;
+
                   setState(() {
                     hasScanned = true;
                   });
-                  Navigator.pushReplacement(
+
+                  // Save the pairing so the next launch opens straight to
+                  // ChatScreen, then go straight to ChatScreen (it opens its
+                  // own WebSocket — no separate ConnectingScreen needed).
+                  SettingsService.setLastConnection(ip, port, httpPort);
+                  Navigator.pushAndRemoveUntil(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => ConnectingScreen(
-                        ip: data['ip'],
-                        port: data['port'],
-                        httpPort: data['httpPort'] ?? 8081,
+                      builder: (context) => ConnectedScreen(
+                        ip: ip,
+                        port: port,
+                        httpPort: httpPort,
                         themeNotifier: widget.themeNotifier,
                       ),
                     ),
+                    (route) => false,
                   );
                   return;
                 }

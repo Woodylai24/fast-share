@@ -10,6 +10,11 @@ class SettingsService {
   static const String _themeKey = 'theme';
   static const String _onboardingCompleteKey = 'onboarding_complete';
 
+  // Last successful pairing (used to skip HomeScreen on subsequent launches)
+  static const String _lastConnIpKey = 'last_conn_ip';
+  static const String _lastConnPortKey = 'last_conn_port';
+  static const String _lastConnHttpPortKey = 'last_conn_http_port';
+
   // Default values
   static const bool _defaultStartupOnBoot = false;
   static const bool _defaultAutoConnectOnLaunch = true;
@@ -115,6 +120,40 @@ class SettingsService {
     await prefs.setBool(_onboardingCompleteKey, value);
   }
 
+  // --- lastConnection (last successful pairing) ---
+
+  /// Returns the last paired connection, or null if none is saved.
+  /// On subsequent launches this is used to open ChatScreen directly.
+  static Future<({String ip, int port, int httpPort})?> getLastConnection() async {
+    final prefs = await _prefs;
+    final ip = prefs.getString(_lastConnIpKey);
+    final port = prefs.getInt(_lastConnPortKey);
+    final httpPort = prefs.getInt(_lastConnHttpPortKey);
+    if (ip == null || port == null || httpPort == null) return null;
+    return (ip: ip, port: port, httpPort: httpPort);
+  }
+
+  /// Save the connection info from a successful pairing so the app can
+  /// reopen straight to ChatScreen on the next launch.
+  static Future<void> setLastConnection(
+    String ip,
+    int port,
+    int httpPort,
+  ) async {
+    final prefs = await _prefs;
+    await prefs.setString(_lastConnIpKey, ip);
+    await prefs.setInt(_lastConnPortKey, port);
+    await prefs.setInt(_lastConnHttpPortKey, httpPort);
+  }
+
+  /// Forget the last pairing. Next launch returns to HomeScreen.
+  static Future<void> clearLastConnection() async {
+    final prefs = await _prefs;
+    await prefs.remove(_lastConnIpKey);
+    await prefs.remove(_lastConnPortKey);
+    await prefs.remove(_lastConnHttpPortKey);
+  }
+
   // --- Reset ---
 
   /// Reset all settings to their default values.
@@ -126,5 +165,6 @@ class SettingsService {
     await prefs.remove(_clipboardSyncKey);
     await prefs.remove(_themeKey);
     await prefs.remove(_onboardingCompleteKey);
+    await clearLastConnection();
   }
 }
