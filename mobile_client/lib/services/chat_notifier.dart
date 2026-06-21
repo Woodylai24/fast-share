@@ -328,11 +328,13 @@ class ChatNotifier extends ChangeNotifier {
           },
           onError: (error) {
             debugPrint('[DEBUG] Reconnect attempt $_reconnectAttempt failed (error): $error');
-            _tryReconnect(); // Retry
+            if (!_isDisconnected && !_intentionalDisconnect) {
+              _tryReconnect(); // Retry
+            }
           },
           onDone: () {
             debugPrint('[DEBUG] Reconnect attempt $_reconnectAttempt failed (done)');
-            if (!_intentionalDisconnect) {
+            if (!_isDisconnected && !_intentionalDisconnect) {
               _tryReconnect(); // Retry
             }
           },

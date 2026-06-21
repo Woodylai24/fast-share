@@ -52,7 +52,7 @@ export function PairingPanel({
         <div className="pairing-header">
           <h2>Pair New Device</h2>
           <button className="pairing-close" onClick={onClose} title="Close">
-            <svg viewBox="0 0 12 12" width="14" height="14">
+            <svg viewBox="0 0 12 12" width="12" height="12">
               <path
                 d="M 2 2 L 10 10 M 10 2 L 2 10"
                 fill="none"

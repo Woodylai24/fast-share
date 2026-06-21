@@ -55,6 +55,13 @@ function App() {
     messageListRef,
   } = useMessages({ messages, setMessages, isConnected });
 
+  // Auto-close pairing panel when a device connects
+  useEffect(() => {
+    if (isConnected && showQr) {
+      setShowQr(false);
+    }
+  }, [isConnected, showQr]);
+
   // Check API key
   const checkApiKey = useCallback(async () => {
     try {
