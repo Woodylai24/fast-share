@@ -1,0 +1,14 @@
+# Copy this file to android/key.properties and fill in your values.
+# key.properties is gitignored (see android/.gitignore) — never commit it.
+#
+# 1. Generate an upload keystore (run from mobile_client/android/app/):
+#      keytool -genkey -v -keystore upload-keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+#    Back up upload-keystore.jks somewhere safe — if you lose it you cannot
+#    publish updates to the same Play Store app.
+#
+# 2. cp key.properties.example key.properties  and set the values below.
+
+storePassword=CHANGE_ME
+keyPassword=CHANGE_ME
+keyAlias=upload
+storeFile=upload-keystore.jks
