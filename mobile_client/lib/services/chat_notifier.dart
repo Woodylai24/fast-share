@@ -1360,8 +1360,10 @@ class ChatNotifier extends ChangeNotifier {
 
     // Route shared files through sendFile() — handles connection check,
     // queueing, messageId in file-end, ACK tracking, placeholder messages.
+    // Must be async so multiple shared files send sequentially (PC receiver
+    // only tracks one incoming file at a time).
     ShareHandler.registerFileCallback((filePath, filename) {
-      sendFile(filePath, filename);
+      return sendFile(filePath, filename);
     });
   }
 

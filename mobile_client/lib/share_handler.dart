@@ -8,7 +8,7 @@ class ShareHandler {
   static const MethodChannel _channel = MethodChannel('fast_share/share_receiver');
 
   static void Function(Map<String, dynamic>)? _textSendCallback;
-  static void Function(String, String)? _fileSendCallback;
+  static Future<void> Function(String, String)? _fileSendCallback;
   static Map<String, String>? _pendingShare;
   static BuildContext? _context;
 
@@ -42,7 +42,9 @@ class ShareHandler {
   }
 
   /// Register callback for shared files. Receives (filePath, filename) pairs.
-  static void registerFileCallback(void Function(String filePath, String filename) callback) {
+  /// Must be async — files are sent sequentially, each must complete before
+  /// the next starts (PC receiver only tracks one incoming file at a time).
+  static void registerFileCallback(Future<void> Function(String filePath, String filename) callback) {
     _fileSendCallback = callback;
   }
 
@@ -83,7 +85,7 @@ class ShareHandler {
             debugPrint('[DEBUG] ShareHandler: resolved to $filePath');
             if (filePath != null) {
               final filename = filePath.split('/').last;
-              _fileSendCallback!(filePath, filename);
+                await _fileSendCallback!(filePath, filename);
             }
           } catch (e) {
             debugPrint('[DEBUG] ShareHandler file error: $e');
