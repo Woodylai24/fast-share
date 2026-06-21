@@ -16,6 +16,9 @@ export function useConnection() {
   const [pairedDevice, setPairedDevice] = useState<{ id: string; name: string; lastSeenAt: string } | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [lastConnected, setLastConnected] = useState<{ device: string; at: string } | null>(null);
+  // Bumped whenever a device connects/disconnects/unpairs so the PairingPanel
+  // knows to re-fetch its paired-devices list even while open.
+  const [pairingRefreshTrigger, setPairingRefreshTrigger] = useState(0);
 
   // Get connection info and initial paired-device state from Electron Main.
   // These run ONCE on mount — no async queries inside event handlers.
@@ -58,9 +61,22 @@ export function useConnection() {
         };
         setMessages((prev) => [...prev, newMessage]);
       } else if (data.type === "handshake") {
-        // Connection established — direct, no async query
+        // Device connected (possibly a new pairing). Set hasPairedDevice
+        // synchronously so the UI enables immediately, then fetch the
+        // device name for display. This async call is safe — we're reading
+        // display data after a definitive event, not using it for state
+        // transitions (the race-prone pattern we eliminated).
         setIsConnected(true);
+        setHasPairedDevice(true);
+        setPairingRefreshTrigger((n) => n + 1);
         window.electronAPI.getLastConnected().then(setLastConnected);
+        window.electronAPI.getPairedDevices().then((devices) => {
+          const entries = Object.entries(devices);
+          if (entries.length > 0) {
+            const [id, info] = entries[0];
+            setPairedDevice({ id, name: info.name, lastSeenAt: info.lastSeenAt });
+          }
+        });
       } else if (data.type === "ping") {
         window.electronAPI.sendPong();
       } else if (data.type === "disconnect") {
@@ -71,6 +87,7 @@ export function useConnection() {
         setHasPairedDevice(false);
         setIsConnected(false);
         setPairedDevice(null);
+        setPairingRefreshTrigger((n) => n + 1);
       } else if (data.type === "image") {
         console.log(
           "[DEBUG] Image message received via WS, waiting for HTTP upload",
@@ -253,5 +270,6 @@ export function useConnection() {
     disconnect,
     getQrData,
     lastConnected,
+    pairingRefreshTrigger,
   };
 }

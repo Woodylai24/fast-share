@@ -43,6 +43,7 @@ function App() {
     disconnect,
     getQrData,
     lastConnected,
+    pairingRefreshTrigger,
   } = useConnection();
 
   const {
@@ -297,6 +298,7 @@ function App() {
           selectedIp={selectedIp}
           onIpChange={setSelectedIp}
           getQrData={getQrData}
+          refreshTrigger={pairingRefreshTrigger}
         />
 
         {/* Context Menu */}

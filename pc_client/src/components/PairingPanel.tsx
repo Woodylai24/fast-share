@@ -18,6 +18,7 @@ interface PairingPanelProps {
   selectedIp: string;
   onIpChange: (ip: string) => void;
   getQrData: () => string;
+  refreshTrigger: number;
 }
 
 export function PairingPanel({
@@ -27,6 +28,7 @@ export function PairingPanel({
   selectedIp,
   onIpChange,
   getQrData,
+  refreshTrigger,
 }: PairingPanelProps) {
   const [pairedDevices, setPairedDevices] = useState<Record<string, PairedDeviceInfo>>({});
 
@@ -36,7 +38,9 @@ export function PairingPanel({
         setPairedDevices(devices as Record<string, PairedDeviceInfo>);
       });
     }
-  }, [isOpen]);
+    // refreshTrigger changes when a device connects/disconnects/unpairs,
+    // so the panel re-fetches even while open.
+  }, [isOpen, refreshTrigger]);
 
   if (!isOpen) return null;
 
