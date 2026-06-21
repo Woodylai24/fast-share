@@ -39,8 +39,9 @@ export interface StoredMessage {
   timestamp: string;
   url?: string;
   filename?: string;
-  // transferState/transferProgress not persisted — in-progress transfers
-  // shouldn't survive reload, and completed transfers don't need them
+  transferState?: TransferState;
+  transferProgress?: number;
+  deliveryStatus?: 'pending' | 'sent' | 'delivered';
 }
 
 // Connection info shape returned from Electron

@@ -3,7 +3,7 @@ import { type Message, type StoredMessage, MessageType } from "../types";
 import { generateId, isImageFile } from "../utils";
 
 // Message persistence service
-const MessageStorage = {
+export const MessageStorage = {
   STORAGE_KEY: "fastshare_messages",
 
   save(messages: Message[]): void {
@@ -26,6 +26,10 @@ const MessageStorage = {
       return parsed.map((msg) => ({
         ...msg,
         timestamp: new Date(msg.timestamp),
+        // Reset any in-progress transfers — they can't resume across restart
+        transferState: msg.transferState === "pending" || msg.transferState === "transferring"
+          ? "failed" as const
+          : msg.transferState,
       }));
     } catch (e) {
       console.error("Failed to load messages:", e);

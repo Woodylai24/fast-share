@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { type ConnectionInfo, type Message, MessageType } from "../types";
 import { generateId, isImageFile } from "../utils";
+import { MessageStorage } from "./useMessages";
 
 export function useConnection() {
   const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo | null>(
@@ -14,7 +15,7 @@ export function useConnection() {
   const [hasPairedDevice, setHasPairedDevice] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [pairedDevice, setPairedDevice] = useState<{ id: string; name: string; lastSeenAt: string } | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => MessageStorage.load());
   const [lastConnected, setLastConnected] = useState<{ device: string; at: string } | null>(null);
   // Bumped whenever a device connects/disconnects/unpairs so the PairingPanel
   // knows to re-fetch its paired-devices list even while open.
