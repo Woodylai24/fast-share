@@ -677,6 +677,36 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
       cleanupFileReassembly(clientInfo);
       connectedClients.delete(clientInfo);
 
+      // Flush pending ACKs for this device into the offline queue.
+      // Without this, messages sent just before disconnect sit in pendingAcks
+      // for up to 15s. If the device reconnects within that window, the
+      // key-exchange flush only processes messageQueue (not pendingAcks), so
+      // those messages are stranded until the NEXT reconnect.
+      if (clientInfo.deviceId) {
+        const idsToFlush: string[] = [];
+        pendingAcks.forEach((entry, msgId) => {
+          if (entry.deviceId === clientInfo.deviceId) {
+            idsToFlush.push(msgId);
+          }
+        });
+        idsToFlush.forEach((msgId) => {
+          const entry = pendingAcks.get(msgId);
+          if (!entry) return;
+          clearTimeout(entry.timer);
+          pendingAcks.delete(msgId);
+          queueMessage(
+            entry.deviceId,
+            entry.message.type || "text",
+            entry.message,
+            entry.filePath,
+            entry.messageType,
+          );
+          console.log(
+            `[DEBUG] Flushed pending ACK ${msgId} to queue on disconnect`,
+          );
+        });
+      }
+
       // Update lastSeenAt for paired device
       if (clientInfo.deviceId) {
         updateDeviceLastSeen(clientInfo.deviceId);
