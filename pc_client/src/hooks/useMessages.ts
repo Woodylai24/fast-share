@@ -51,12 +51,29 @@ export function useMessages({ messages, setMessages }: UseMessagesOptions) {
   const [inputText, setInputText] = useState("");
   const messageListRef = useRef<HTMLDivElement>(null);
 
-  // Save messages when they change
+  // Keep a ref to the latest messages so beforeunload can access them
+  // synchronously without waiting for React's async effect cycle.
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
+  // Save messages whenever they change
   useEffect(() => {
-    if (messages.length > 0) {
-      MessageStorage.save(messages);
-    }
+    MessageStorage.save(messages);
   }, [messages]);
+
+  // Safety net: force-save on app exit. React effects fire asynchronously
+  // after paint — if the window is destroyed before the effect runs, the
+  // last state update is lost. This is the main cause of file/image
+  // messages disappearing after restart (rapid IPC events from chunked
+  // transfers get batched; if the app closes before the batched render,
+  // the save never fires).
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      MessageStorage.save(messagesRef.current);
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -84,7 +101,7 @@ export function useMessages({ messages, setMessages }: UseMessagesOptions) {
 
   const clearHistory = () => {
     setMessages([]);
-    MessageStorage.clear();
+    MessageStorage.save([]);
   };
 
   const addSentFileMessage = (
