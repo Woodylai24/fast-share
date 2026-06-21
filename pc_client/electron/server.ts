@@ -10,7 +10,7 @@ import { CryptoManager, isUnencryptedType } from "./crypto";
 import { processFileMessage, cleanupFileReassembly, FILE_CHUNK_SIZE } from "./file-transfer";
 import { startClipboardSync } from "./clipboard-sync";
 import settingsStore from "./settings-store";
-import { pairDevice, updateDeviceLastSeen } from "./settings-store";
+import { pairDevice, updateDeviceLastSeen, removePairedDevice } from "./settings-store";
 
 // --- Configuration ---
 const WS_PORT = 8080;
@@ -539,6 +539,23 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
             clearTimeout(clientInfo.pongTimeout);
             clientInfo.pongTimeout = undefined;
           }
+          return;
+        }
+
+        if (data.type === "unpair") {
+          console.log("[DEBUG] Client unpairing:", data.deviceId);
+          if (data.deviceId) {
+            removePairedDevice(data.deviceId);
+          }
+          stopHeartbeat(clientInfo);
+          cleanupFileReassembly(clientInfo);
+          connectedClients.delete(clientInfo);
+          // Notify renderer — device was explicitly unpaired
+          getMainWindow()?.webContents.send("ws-message", {
+            type: "unpaired",
+            deviceId: data.deviceId,
+          });
+          ws.close();
           return;
         }
 

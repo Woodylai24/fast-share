@@ -125,6 +125,7 @@ const Set<String> unencryptedTypes = {
   'key-exchange',
   'reconnect',
   'disconnect',
+  'unpair',
   'ping',
   'pong',
   'message-ack',

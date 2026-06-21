@@ -1278,6 +1278,16 @@ class ChatNotifier extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Unpair from the PC — sends an unpair message so the PC removes this
+  /// device from its pairedDevices store, then disconnects.
+  void handleUnpair() {
+    if (!_isDisconnected) {
+      _sendJson({'type': 'unpair', 'deviceId': _deviceId});
+      debugPrint('[DEBUG] Sent unpair message to PC');
+    }
+    handleUserDisconnect();
+  }
+
   String? _disconnectReason;
   String? get disconnectReason => _disconnectReason;
 

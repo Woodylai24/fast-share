@@ -117,7 +117,7 @@ class _ConnectedScreenState extends State<ConnectedScreen>
   /// On the next launch the app opens straight to HomeScreen again until a
   /// new PC is paired.
   Future<void> _handleUnpair() async {
-    _notifier.handleUserDisconnect();
+    _notifier.handleUnpair();
     await SettingsService.clearLastConnection();
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(

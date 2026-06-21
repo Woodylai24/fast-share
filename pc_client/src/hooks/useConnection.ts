@@ -66,6 +66,11 @@ export function useConnection() {
       } else if (data.type === "disconnect") {
         // Mobile went to background — connection lost
         setIsConnected(false);
+      } else if (data.type === "unpaired") {
+        // Mobile explicitly unpaired — remove from paired state
+        setHasPairedDevice(false);
+        setIsConnected(false);
+        setPairedDevice(null);
       } else if (data.type === "image") {
         console.log(
           "[DEBUG] Image message received via WS, waiting for HTTP upload",
