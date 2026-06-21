@@ -91,16 +91,21 @@ export function useMessages({ messages, setMessages, isConnected }: UseMessagesO
   ) => {
     const isImage = isImageFile(fileName);
     const fileUrl = `http://localhost:${httpPort}/files/${encodeURIComponent(fileName)}`;
+    const messageId = generateId();
+    // Note: offerFile is called by App.tsx, not here. The messageId must
+    // be passed back so App.tsx can include it in the offerFile call.
     const newMessage: Message = {
-      id: generateId(),
+      id: messageId,
       type: isImage ? MessageType.IMAGE : MessageType.FILE,
       content: fileName,
       sender: "Me",
       timestamp: new Date(),
       url: fileUrl,
       filename: fileName,
+      deliveryStatus: 'sent',
     };
     setMessages((prev) => [...prev, newMessage]);
+    return messageId;
   };
 
   return {

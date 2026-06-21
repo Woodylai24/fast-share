@@ -262,7 +262,7 @@ function processFileMessage(clientInfo: any, data: any, getMainWindow: GetMainWi
  * Send a file via encrypted chunked WebSocket transfer.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function sendFileEncrypted(client: any, filePath: string, fileName: string, messageType: string, sendEncrypted: SendEncryptedFn, getMainWindow: GetMainWindowFn) {
+function sendFileEncrypted(client: any, filePath: string, fileName: string, messageType: string, sendEncrypted: SendEncryptedFn, getMainWindow: GetMainWindowFn, messageId?: string) {
   try {
     const fileBuffer = fs.readFileSync(filePath);
     const fileSize = fileBuffer.length;
@@ -313,11 +313,15 @@ function sendFileEncrypted(client: any, filePath: string, fileName: string, mess
     }
 
     // Send file-end
-    sendEncrypted(client, {
+    const fileEndMsg: Record<string, unknown> = {
       type: "file-end",
       filename: fileName,
       checksum,
-    });
+    };
+    if (messageId) {
+      fileEndMsg.messageId = messageId;
+    }
+    sendEncrypted(client, fileEndMsg);
 
     // Notify renderer that send is complete
     getMainWindow()?.webContents.send("file-sent-complete", {

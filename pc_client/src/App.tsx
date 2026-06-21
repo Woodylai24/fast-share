@@ -131,10 +131,10 @@ function App() {
     const filePaths = await window.electronAPI.selectFile();
     if (filePaths && filePaths.length > 0) {
       filePaths.forEach((filePath) => {
-        window.electronAPI.offerFile(filePath, selectedIp);
         const fileName = filePath.split(/[/\\]/).pop() || filePath;
         const httpPort = connectionInfo?.httpPort || 8081;
-        addSentFileMessage(fileName, httpPort, selectedIp);
+        const messageId = addSentFileMessage(fileName, httpPort, selectedIp);
+        window.electronAPI.offerFile(filePath, selectedIp, messageId);
       });
     }
   };
@@ -151,9 +151,9 @@ function App() {
       files.forEach((file) => {
         const filePath = window.electronAPI.getPathForFile(file);
         if (filePath) {
-          window.electronAPI.offerFile(filePath, selectedIp);
           const httpPort = connectionInfo?.httpPort || 8081;
-          addSentFileMessage(file.name, httpPort, selectedIp);
+          const messageId = addSentFileMessage(file.name, httpPort, selectedIp);
+          window.electronAPI.offerFile(filePath, selectedIp, messageId);
         }
       });
     }

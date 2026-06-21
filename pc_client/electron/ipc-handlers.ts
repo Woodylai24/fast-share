@@ -223,7 +223,7 @@ function registerIpcHandlers(
     }
   });
 
-  ipcMainInstance.on("offer-file", async (event, filePath, ip) => {
+  ipcMainInstance.on("offer-file", async (event, filePath, ip, messageId) => {
     const fileName = path.basename(filePath);
     const sharedDir = path.join(os.homedir(), "FastShare");
     if (!fs.existsSync(sharedDir)) fs.mkdirSync(sharedDir, { recursive: true });
@@ -256,8 +256,12 @@ function registerIpcHandlers(
         client.keyExchangeComplete
       ) {
         // Send file via encrypted chunked WS transfer
-        sendFileEncrypted(client, destPath, fileName, messageType, sendEncrypted, getMainWindow);
+        sendFileEncrypted(client, destPath, fileName, messageType, sendEncrypted, getMainWindow, messageId);
         sentViaWs = true;
+        // Track ACK — mobile confirms receipt after reassembling the file
+        if (messageId && client.deviceId) {
+          trackPendingAck(messageId, { type: messageType, filename: fileName, url: fileUrl }, client.deviceId);
+        }
       }
     });
 

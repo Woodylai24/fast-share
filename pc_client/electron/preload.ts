@@ -5,8 +5,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   sendText: (text: string, messageId: string) => ipcRenderer.send("send-text", text, messageId),
   sendPong: () => ipcRenderer.send("send-pong"),
   disconnectClient: () => ipcRenderer.send("disconnect-client"),
-  offerFile: (filePath: string, ip: string) =>
-    ipcRenderer.send("offer-file", filePath, ip),
+  offerFile: (filePath: string, ip: string, messageId: string) =>
+    ipcRenderer.send("offer-file", filePath, ip, messageId),
   selectFile: () => ipcRenderer.invoke("select-file"),
   openExternal: (url: string) => ipcRenderer.send("open-external", url),
   openPath: (filePath: string) => ipcRenderer.send("open-path", filePath),

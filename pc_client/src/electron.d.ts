@@ -17,7 +17,7 @@ export interface IElectronAPI {
   sendText: (text: string, messageId: string) => void;
   sendPong: () => void;
   disconnectClient: () => void;
-  offerFile: (filePath: string, ip: string) => void;
+  offerFile: (filePath: string, ip: string, messageId: string) => void;
   selectFile: () => Promise<string[] | undefined>;
   openExternal: (url: string) => void;
   openPath: (filePath: string) => void;
