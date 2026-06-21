@@ -1352,44 +1352,16 @@ class ChatNotifier extends ChangeNotifier {
   void setupShareHandler() {
     ShareHandler.setupListener();
 
-    ShareHandler.registerSendCallback((data) {
-      // Add messageId for ACK tracking on text messages
-      if (data['type'] == 'text' && data['content'] != null) {
-        final messageId = _generateMessageId();
-        data['messageId'] = messageId;
-        _sendJson(data);
-        final msg = Message.text(
-          content: data['content'] as String, sender: 'Me',
-        ).copyWith(id: messageId, deliveryStatus: 'sent');
-        _messages.add(msg);
-        _trackPendingAck(messageId);
-        notifyListeners();
-        _saveMessages();
-        _scrollToBottom();
-      } else {
-        // Non-text shares (files, etc.) — no ACK tracking
-        _sendJson(data);
-      }
+    // Route shared text through sendText() — handles connection check,
+    // queueing, ACK tracking, and delivery status.
+    ShareHandler.registerTextCallback((text) {
+      sendText(text);
     });
 
-    ShareHandler.registerLocalMessageCallback((fileInfo) {
-      final filename = fileInfo['filename'] ?? 'Unknown';
-      final url = fileInfo['url'] ?? '';
-      final isImage =
-          filename.toLowerCase().endsWith('.jpg') ||
-          filename.toLowerCase().endsWith('.jpeg') ||
-          filename.toLowerCase().endsWith('.png') ||
-          filename.toLowerCase().endsWith('.gif') ||
-          filename.toLowerCase().endsWith('.webp') ||
-          filename.toLowerCase().endsWith('.bmp');
-      if (isImage) {
-        _messages.add(Message.image(filename: filename, url: url, sender: 'Me'));
-      } else {
-        _messages.add(Message.file(filename: filename, url: url, sender: 'Me'));
-      }
-      notifyListeners();
-      _saveMessages();
-      _scrollToBottom();
+    // Route shared files through sendFile() — handles connection check,
+    // queueing, messageId in file-end, ACK tracking, placeholder messages.
+    ShareHandler.registerFileCallback((filePath, filename) {
+      sendFile(filePath, filename);
     });
   }
 
@@ -1403,7 +1375,7 @@ class ChatNotifier extends ChangeNotifier {
     _keyExchangeTimeout?.cancel();
     _watchdogTimer?.cancel();
     _incomingFile?._cleanup();
-    ShareHandler.unregisterSendCallback();
+    ShareHandler.unregisterCallbacks();
     _subscription?.cancel();
     channel.sink.close();
     scrollController.dispose();

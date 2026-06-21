@@ -53,32 +53,18 @@
                 <data android:mimeType="text/plain"/>
             </intent-filter>
 
-            <!-- Handle sharing images -->
+            <!-- Handle sharing any file type (images, videos, documents, etc.) -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND"/>
                 <category android:name="android.intent.category.DEFAULT"/>
-                <data android:mimeType="image/*"/>
+                <data android:mimeType="*/*"/>
             </intent-filter>
 
-            <!-- Handle sharing files -->
-            <intent-filter>
-                <action android:name="android.intent.action.SEND"/>
-                <category android:name="android.intent.category.DEFAULT"/>
-                <data android:mimeType="application/*"/>
-            </intent-filter>
-
-            <!-- Handle sharing multiple images -->
+            <!-- Handle sharing multiple files of any type -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND_MULTIPLE"/>
                 <category android:name="android.intent.category.DEFAULT"/>
-                <data android:mimeType="image/*"/>
-            </intent-filter>
-
-            <!-- Handle sharing multiple files -->
-            <intent-filter>
-                <action android:name="android.intent.action.SEND_MULTIPLE"/>
-                <category android:name="android.intent.category.DEFAULT"/>
-                <data android:mimeType="application/*"/>
+                <data android:mimeType="*/*"/>
             </intent-filter>
         </activity>
 
