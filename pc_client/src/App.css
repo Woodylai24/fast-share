@@ -15,15 +15,13 @@
 .container {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 2rem;
-  padding: 2rem;
+  padding: 1rem;
   flex: 1;
-  overflow-y: auto;
   margin-top: 32px; /* Push below fixed title bar */
   border: 2px dashed transparent;
   transition: all 0.2s;
   box-sizing: border-box;
+  min-height: 0;
 }
 
 .container.dragging {
@@ -101,15 +99,26 @@
   color: #4fc3f7;
 }
 
+.drag-drop-hint {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  text-align: center;
+  margin: 0;
+  padding: 0.25rem 0;
+}
+
 .messages-area {
-  width: 100%;
-  max-width: 600px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   text-align: left;
+  width: 100%;
 }
 
 .messages-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   margin-bottom: 0.5rem;
 }
@@ -130,12 +139,12 @@
 }
 
 .clear-history-btn:hover {
-  background: var(--border-primary);
+  background: var(--border-secondary);
 }
 
 .message-list {
   background: var(--bg-secondary);
-  height: 300px;
+  flex: 1;
   overflow-y: auto;
   padding: 1rem;
   border-radius: 8px;
@@ -143,6 +152,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  min-height: 0;
 }
 
 /* Day separator */
@@ -388,8 +398,8 @@
 .input-area {
   display: flex;
   gap: 0.5rem;
+  padding-top: 0.5rem;
   width: 100%;
-  max-width: 600px;
 }
 
 input[type="text"] {

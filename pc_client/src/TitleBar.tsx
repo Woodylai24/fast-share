@@ -4,9 +4,10 @@ import "./TitleBar.css";
 interface TitleBarProps {
   onSettingsClick?: () => void;
   onQrClick?: () => void;
+  onUploadClick?: () => void;
 }
 
-export function TitleBar({ onSettingsClick, onQrClick }: TitleBarProps) {
+export function TitleBar({ onSettingsClick, onQrClick, onUploadClick }: TitleBarProps) {
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
@@ -35,6 +36,17 @@ export function TitleBar({ onSettingsClick, onQrClick }: TitleBarProps) {
         <span className="title-bar-title">Fast Share</span>
       </div>
       <div className="title-bar-actions">
+        {onUploadClick && (
+          <button
+            className="title-bar-button upload"
+            onClick={onUploadClick}
+            title="Upload File"
+          >
+            <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">
+              <path d="M10 2a1 1 0 0 1 1 1v8.586l2.293-2.293a1 1 0 1 1 1.414 1.414l-4 4a1 1 0 0 1-1.414 0l-4-4a1 1 0 0 1 1.414-1.414L9 11.586V3a1 1 0 0 1 1-1zM4 15a1 1 0 0 1 1 1v1h10v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1z"/>
+            </svg>
+          </button>
+        )}
         {onQrClick && (
           <button
             className="title-bar-button qr"

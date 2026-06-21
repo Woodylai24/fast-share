@@ -6,7 +6,6 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { SummaryPopup } from "./SummaryPopup";
 import { ContextMenu } from "./components/ContextMenu";
 import { MessageBubble } from "./components/MessageBubble";
-import { FileInput } from "./components/FileInput";
 import { Onboarding } from "./Onboarding";
 import { useConnection } from "./hooks/useConnection";
 import { useMessages } from "./hooks/useMessages";
@@ -215,6 +214,7 @@ function App() {
       <TitleBar
         onSettingsClick={() => setShowSettings(true)}
         onQrClick={() => setShowQr(true)}
+        onUploadClick={hasPairedDevice ? handleBrowseFiles : undefined}
       />
       <div
         className={`container ${isDragging ? "dragging" : ""}`}
@@ -224,25 +224,17 @@ function App() {
         onDragLeave={handleDragLeave}
       >
         {hasPairedDevice && (
-          <FileInput
-            isDragging={isDragging}
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            onDragEnter={handleDragEnter}
-            onDragLeave={handleDragLeave}
-            onBrowseFiles={handleBrowseFiles}
-          />
+          <p className="drag-drop-hint">Drag &amp; Drop files here to share</p>
         )}
 
         <div className="messages-area">
           <div className="messages-header">
-            <h3>Activity Log</h3>
             <button
               className="clear-history-btn"
               onClick={clearHistory}
               title="Clear message history"
             >
-              🗑️ Clear
+              Clear
             </button>
           </div>
           <div className="message-list" ref={messageListRef}>

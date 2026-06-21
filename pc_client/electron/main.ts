@@ -18,7 +18,7 @@ function getMainWindow() {
 // --- Electron Window ---
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 900,
+    width: 800,
     height: 600,
     frame: false,
     transparent: false,
