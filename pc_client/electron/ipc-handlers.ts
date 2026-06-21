@@ -260,7 +260,7 @@ function registerIpcHandlers(
         sentViaWs = true;
         // Track ACK — mobile confirms receipt after reassembling the file
         if (messageId && client.deviceId) {
-          trackPendingAck(messageId, { type: messageType, filename: fileName, url: fileUrl }, client.deviceId, undefined, destPath, messageType);
+          trackPendingAck(messageId, { type: messageType, filename: fileName, url: fileUrl, messageId }, client.deviceId, undefined, destPath, messageType);
         }
       }
     });
@@ -289,7 +289,7 @@ function registerIpcHandlers(
       for (const [deviceId] of Object.entries(pairedDevices)) {
         // Queue with filePath so the flush logic does a proper chunked
         // WS retransfer on reconnect, not a URL reference the mobile can't reach.
-        queueMessage(deviceId, messageType, legacyMessage, destPath, messageType);
+        queueMessage(deviceId, messageType, { ...legacyMessage, messageId }, destPath, messageType);
         await sendPushNotification(deviceId, {
           title: messageType === "image" ? "Image Received" : "File Received",
           body: fileName,

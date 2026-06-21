@@ -151,7 +151,7 @@ export function MessageBubble({
                   {isMe ? "Sent" : "Received"} — Click to open
                 </span>
               ) : (
-                <span className="file-action">Click to download</span>
+                <span className="file-action">Click to open</span>
               )}
             </div>
           </div>

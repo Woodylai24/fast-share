@@ -452,6 +452,7 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
                     // File retransfer — use chunked WS transfer instead of
                     // sending the URL reference (mobile can't reach the URL)
                     const fileName = path.basename(msg.filePath);
+                    const msgId = msg.data?.messageId;
                     console.log("[DEBUG] Retransferring queued file:", fileName);
                     sendFileEncrypted(
                       clientInfo,
@@ -460,8 +461,20 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
                       msg.messageType || "file",
                       sendEncrypted,
                       getMainWindow,
-                      msg.data?.messageId,
+                      msgId,
                     );
+                    // Track ACK so the delivery status upgrades ✓→✓✓,
+                    // and the message re-queues if this retransfer also fails
+                    if (msgId) {
+                      trackPendingAck(
+                        msgId,
+                        msg.data,
+                        clientInfo.deviceId!,
+                        getMainWindow,
+                        msg.filePath,
+                        msg.messageType,
+                      );
+                    }
                   } else {
                     sendEncrypted(clientInfo, msg.data);
                     // Track ACK if messageId is present

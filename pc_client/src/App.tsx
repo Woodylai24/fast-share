@@ -35,14 +35,10 @@ function App() {
     connectionInfo,
     selectedIp,
     setSelectedIp,
-    isConnected,
     hasPairedDevice,
-    pairedDevice,
     messages,
     setMessages,
-    disconnect,
     getQrData,
-    lastConnected,
     pairingRefreshTrigger,
   } = useConnection();
 
@@ -53,7 +49,7 @@ function App() {
     clearHistory,
     addSentFileMessage,
     messageListRef,
-  } = useMessages({ messages, setMessages, isConnected });
+  } = useMessages({ messages, setMessages });
 
   // Auto-close pairing panel when a NEW device pairs (not on reconnect)
   const prevHasPaired = useRef(false);
@@ -280,14 +276,6 @@ function App() {
             disabled={!hasPairedDevice}
           />
           <button onClick={sendText} disabled={!hasPairedDevice}>Send</button>
-          {isConnected && (
-            <button
-              onClick={disconnect}
-              style={{ marginLeft: "0.5rem", backgroundColor: "#dc3545" }}
-            >
-              Disconnect
-            </button>
-          )}
         </div>
 
         {/* Settings Panel */}
