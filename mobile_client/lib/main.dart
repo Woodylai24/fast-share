@@ -11,6 +11,7 @@ import 'package:fast_share_mobile/services/theme_notifier.dart';
 import 'package:fast_share_mobile/theme/app_theme.dart';
 import 'package:fast_share_mobile/screens/home_screen.dart';
 import 'package:fast_share_mobile/screens/onboarding_screen.dart';
+import 'package:fast_share_mobile/screens/chat_screen.dart';
 import 'package:fast_share_mobile/services/settings_service.dart';
 import 'package:fast_share_mobile/services/file_storage.dart';
 
@@ -114,17 +115,24 @@ class FastShareApp extends StatefulWidget {
 
 class _FastShareAppState extends State<FastShareApp> {
   bool _onboardingComplete = false;
+  ({String ip, int port, int httpPort})? _lastConnection;
 
   @override
   void initState() {
     super.initState();
-    _loadOnboardingState();
+    _loadLaunchState();
   }
 
-  Future<void> _loadOnboardingState() async {
+  Future<void> _loadLaunchState() async {
     final complete = await SettingsService.getOnboardingComplete();
+    // Only look up a saved pairing once onboarding is done — there can't be
+    // one before the user has been through the intro flow.
+    final lastConn = complete ? await SettingsService.getLastConnection() : null;
     if (mounted) {
-      setState(() => _onboardingComplete = complete);
+      setState(() {
+        _onboardingComplete = complete;
+        _lastConnection = lastConn;
+      });
     }
   }
 
@@ -138,15 +146,35 @@ class _FastShareAppState extends State<FastShareApp> {
           theme: AppTheme.light,
           darkTheme: AppTheme.dark,
           themeMode: widget.themeNotifier.mode,
-          home: _onboardingComplete
-              ? HomeScreen(themeNotifier: widget.themeNotifier)
-              : OnboardingScreen(
-                  onComplete: () {
-                    setState(() => _onboardingComplete = true);
-                  },
-                ),
+          // WhatsApp-like routing:
+          //  - Onboarding not done → OnboardingScreen
+          //  - Returning user with a saved pairing → ChatScreen (auto-connects)
+          //  - First launch / unpaired → HomeScreen (QR scanner + manual IP)
+          home: _homeScreen(),
         );
       },
     );
+  }
+
+  Widget _homeScreen() {
+    if (!_onboardingComplete) {
+      return OnboardingScreen(
+        onComplete: () {
+          setState(() => _onboardingComplete = true);
+        },
+      );
+    }
+
+    final conn = _lastConnection;
+    if (conn != null) {
+      return ConnectedScreen(
+        ip: conn.ip,
+        port: conn.port,
+        httpPort: conn.httpPort,
+        themeNotifier: widget.themeNotifier,
+      );
+    }
+
+    return HomeScreen(themeNotifier: widget.themeNotifier);
   }
 }

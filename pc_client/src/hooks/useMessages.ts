@@ -41,9 +41,10 @@ const MessageStorage = {
 interface UseMessagesOptions {
   messages: Message[];
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+  isConnected: boolean;
 }
 
-export function useMessages({ messages, setMessages }: UseMessagesOptions) {
+export function useMessages({ messages, setMessages, isConnected }: UseMessagesOptions) {
   const [inputText, setInputText] = useState("");
   const messageListRef = useRef<HTMLDivElement>(null);
 
@@ -63,13 +64,15 @@ export function useMessages({ messages, setMessages }: UseMessagesOptions) {
 
   const sendText = () => {
     if (inputText.trim()) {
-      window.electronAPI.sendText(inputText);
+      const messageId = generateId();
+      window.electronAPI.sendText(inputText, messageId);
       const newMessage: Message = {
-        id: generateId(),
+        id: messageId,
         type: MessageType.TEXT,
         content: inputText,
         sender: "Me",
         timestamp: new Date(),
+        deliveryStatus: 'sent', // upgrades to 'delivered' when ACK arrives
       };
       setMessages((prev) => [...prev, newMessage]);
       setInputText("");
@@ -88,16 +91,21 @@ export function useMessages({ messages, setMessages }: UseMessagesOptions) {
   ) => {
     const isImage = isImageFile(fileName);
     const fileUrl = `http://localhost:${httpPort}/files/${encodeURIComponent(fileName)}`;
+    const messageId = generateId();
+    // Note: offerFile is called by App.tsx, not here. The messageId must
+    // be passed back so App.tsx can include it in the offerFile call.
     const newMessage: Message = {
-      id: generateId(),
+      id: messageId,
       type: isImage ? MessageType.IMAGE : MessageType.FILE,
       content: fileName,
       sender: "Me",
       timestamp: new Date(),
       url: fileUrl,
       filename: fileName,
+      deliveryStatus: 'sent',
     };
     setMessages((prev) => [...prev, newMessage]);
+    return messageId;
   };
 
   return {

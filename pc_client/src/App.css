@@ -78,6 +78,29 @@
   color: #fff;
 }
 
+.status.paired-offline {
+  color: var(--text-secondary);
+}
+
+.delivery-status {
+  display: inline-block;
+  margin-left: 0.25rem;
+  font-size: 0.75rem;
+  vertical-align: middle;
+}
+
+.tick-pending {
+  opacity: 0.5;
+}
+
+.tick-sent {
+  color: var(--text-secondary);
+}
+
+.tick-delivered {
+  color: #4fc3f7;
+}
+
 .messages-area {
   width: 100%;
   max-width: 600px;

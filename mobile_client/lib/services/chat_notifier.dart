@@ -73,6 +73,27 @@ class ChatNotifier extends ChangeNotifier {
   bool _isReconnecting = false;
   bool get isReconnecting => _isReconnecting;
 
+  /// True once the first connection has been fully established (key exchange
+  /// complete). Used to distinguish the very first connect attempt from later
+  /// reconnects so the UI can show a distinct "Connecting to PC…" state.
+  bool _everConnected = false;
+
+  /// True while the first connection attempt is in progress (before the first
+  /// successful connection). Drives the WhatsApp-like "Connecting to PC…"
+  /// banner shown on launch.
+  bool get isInitialConnecting => !_everConnected && !_intentionalDisconnect;
+
+  /// Whether the reconnect/disconnect banner should be visible.
+  /// Suppresses both banners on the first reconnect attempt (e.g. returning
+  /// from background) so the user doesn't see a flash before the connection
+  /// is quickly restored. Shows on subsequent failures.
+  bool get showReconnectBanner {
+    if (!_isDisconnected && !_isReconnecting) return false;
+    // Hide during first reconnect attempt
+    if (_isReconnecting && _reconnectAttempt <= 1) return false;
+    return true;
+  }
+
   bool _isInForeground = true;
   bool get isInForeground => _isInForeground;
 
@@ -98,6 +119,32 @@ class ChatNotifier extends ChangeNotifier {
 
   // Progress throttle — last notified progress percentage (0-100)
   int _lastNotifiedProgress = -1;
+
+  // Reconnect with backoff
+  static const int _initialReconnectDelay = 1; // seconds
+  static const int _maxReconnectDelay = 30;    // seconds
+  int _reconnectAttempt = 0;
+  Timer? _reconnectTimer;
+
+  // Connection watchdog: detects silent disconnect (e.g. WiFi disabled).
+  // Server sends pings every 30s. If we don't receive ANY message for 45s,
+  // the connection is dead.
+  DateTime? _lastServerMessageAt;
+  Timer? _watchdogTimer;
+  static const Duration _watchdogInterval = Duration(seconds: 10);
+  static const Duration _watchdogTimeout = Duration(seconds: 45);
+
+  // Pending message queue (Phase 3)
+  final List<Message> _pendingMessages = [];
+
+  // Message ACK tracking (two-way delivery confirmation)
+  // Maps messageId → timer. When the timer fires, the message was not
+  // acknowledged → connection is dead → move to pending queue.
+  final Map<String, Timer> _pendingAcks = {};
+  static const Duration _ackTimeout = Duration(seconds: 15);
+  // Dedup: tracks recently seen incoming messageIds
+  final Set<String> _recentMessageIds = {};
+  static const int _maxRecentIds = 200;
 
   // Scroll control (exposed for the widget to use)
   final ScrollController scrollController = ScrollController();
@@ -145,11 +192,15 @@ class ChatNotifier extends ChangeNotifier {
 
   void _scrollToBottom() {
     if (scrollController.hasClients) {
-      scrollController.animateTo(
-        scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-      );
+      // Use jumpTo with a very large offset — Flutter clamps it to
+      // maxScrollExtent automatically. This avoids the stale-extent bug
+      // where animateTo(maxScrollExtent) targets a value that's one item
+      // behind because layout hasn't caught up yet.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (scrollController.hasClients) {
+          scrollController.jumpTo(scrollController.position.maxScrollExtent);
+        }
+      });
     }
   }
 
@@ -157,7 +208,7 @@ class ChatNotifier extends ChangeNotifier {
 
   Future<void> _connect() async {
     final wsUrl = Uri.parse('ws://$ip:$port');
-    debugPrint('[DEBUG] ChatNotifier: Connecting to $wsUrl');
+    debugPrint('[LIFECYCLE] _connect() called — creating WebSocket to $wsUrl');
 
     await _crypto.init();
     _keyExchangeComplete = false;
@@ -187,17 +238,13 @@ class ChatNotifier extends ChangeNotifier {
       onError: (error) {
         debugPrint('[DEBUG] WebSocket ERROR: $error');
         if (!_isDisconnected && !_intentionalDisconnect) {
-          debugPrint(
-            '[DEBUG] Connection error, will attempt reconnect on resume',
-          );
+          handleDisconnect('Connection error');
         }
       },
       onDone: () {
         debugPrint('[DEBUG] WebSocket connection CLOSED');
         if (!_isDisconnected && !_intentionalDisconnect) {
-          debugPrint(
-            '[DEBUG] Connection closed unexpectedly, will attempt reconnect on resume',
-          );
+          handleDisconnect('Connection lost');
         }
       },
     );
@@ -218,7 +265,15 @@ class ChatNotifier extends ChangeNotifier {
 
   bool _isConnected() {
     try {
-      return !_isDisconnected && channel.closeCode == null;
+      // Must NOT be reconnecting and key exchange must be complete.
+      // Without _keyExchangeComplete, _sendJson falls back to plaintext,
+      // which means messages sent during reconnect are unencrypted.
+      // Without !_isReconnecting, messages are sent over a half-open
+      // channel that hasn't completed the handshake yet.
+      return !_isDisconnected &&
+          !_isReconnecting &&
+          _keyExchangeComplete &&
+          channel.closeCode == null;
     } catch (e) {
       return false;
     }
@@ -228,77 +283,240 @@ class ChatNotifier extends ChangeNotifier {
     if (_isReconnecting || _intentionalDisconnect) return;
 
     _isReconnecting = true;
+    _reconnectAttempt = 0;
     notifyListeners();
-    debugPrint('[DEBUG] Attempting to reconnect...');
+    debugPrint('[DEBUG] Starting reconnect with exponential backoff...');
+    _tryReconnect();
+  }
 
-    try {
-      await _subscription?.cancel();
-
-      await _crypto.init();
-      _keyExchangeComplete = false;
-
-      final wsUrl = Uri.parse('ws://$ip:$port');
-      channel = WebSocketChannel.connect(wsUrl);
-
-      _subscription = channel.stream.listen(
-        (message) {
-          debugPrint('[DEBUG] Received message on reconnect: $message');
-          try {
-            final data = jsonDecode(message);
-            _handleRawMessage(data);
-          } catch (e) {
-            debugPrint('[DEBUG] Failed to parse message: $e');
-            if (!_isDisconnected) {
-              _messages.add(
-                Message.text(content: message.toString(), sender: 'PC'),
-              );
-              notifyListeners();
-              _saveMessages();
-              _scrollToBottom();
-            }
-          }
-        },
-        onError: (error) {
-          debugPrint('[DEBUG] Reconnect WebSocket ERROR: $error');
-          if (!_intentionalDisconnect) {
-            handleDisconnect('Connection error: $error');
-          }
-        },
-        onDone: () {
-          debugPrint('[DEBUG] Reconnect WebSocket CLOSED');
-          if (!_intentionalDisconnect) {
-            handleDisconnect('Connection closed');
-          }
-        },
-      );
-
-      _sendJson({'type': 'reconnect', 'deviceId': _deviceId});
-      debugPrint('[DEBUG] Reconnect message sent');
-
-      _isDisconnected = false;
-      _isReconnecting = false;
-      notifyListeners();
-    } catch (e) {
-      debugPrint('[DEBUG] Reconnect failed: $e');
-      _isReconnecting = false;
-      notifyListeners();
-      handleDisconnect('Reconnection failed');
+  void _tryReconnect() {
+    if (_intentionalDisconnect) {
+      _cancelReconnect();
+      return;
     }
+
+    // Calculate delay with exponential backoff
+    final delaySeconds = (_initialReconnectDelay * (1 << _reconnectAttempt)).clamp(1, _maxReconnectDelay);
+    _reconnectAttempt++;
+    debugPrint('[DEBUG] Reconnect attempt $_reconnectAttempt, waiting ${delaySeconds}s...');
+    notifyListeners();
+
+    _reconnectTimer = Timer(Duration(seconds: delaySeconds), () {
+      _performReconnectAttempt();
+    });
+  }
+
+  void _performReconnectAttempt() {
+    debugPrint('[LIFECYCLE] _performReconnectAttempt #$_reconnectAttempt — _isDisconnected=$_isDisconnected, _isReconnecting=$_isReconnecting');
+    try {
+      _subscription?.cancel();
+      _crypto.init().then((_) {
+        _keyExchangeComplete = false;
+
+        final wsUrl = Uri.parse('ws://$ip:$port');
+        channel = WebSocketChannel.connect(wsUrl);
+
+        _subscription = channel.stream.listen(
+          (message) {
+            debugPrint('[DEBUG] Received message on reconnect: $message');
+            try {
+              final data = jsonDecode(message);
+              _handleRawMessage(data);
+            } catch (e) {
+              debugPrint('[DEBUG] Failed to parse message: $e');
+            }
+          },
+          onError: (error) {
+            debugPrint('[DEBUG] Reconnect attempt $_reconnectAttempt failed (error): $error');
+            if (!_isDisconnected && !_intentionalDisconnect) {
+              _tryReconnect(); // Retry
+            }
+          },
+          onDone: () {
+            debugPrint('[DEBUG] Reconnect attempt $_reconnectAttempt failed (done)');
+            if (!_isDisconnected && !_intentionalDisconnect) {
+              _tryReconnect(); // Retry
+            }
+          },
+        );
+
+        // Reset disconnected flag — we have a fresh WebSocket now.
+        // The old flag was set for the previous dead connection.
+        // Without this, _sendJson's guard at the top silently drops the
+        // reconnect message, the server never receives it, and the 5s
+        // key-exchange timer fires → connection closed.
+        _isDisconnected = false;
+
+        _sendJson({'type': 'reconnect', 'deviceId': _deviceId});
+        debugPrint('[DEBUG] Reconnect message sent for attempt $_reconnectAttempt');
+      });
+    } catch (e) {
+      debugPrint('[DEBUG] Reconnect attempt $_reconnectAttempt exception: $e');
+      _tryReconnect(); // Retry
+    }
+  }
+
+  void _cancelReconnect() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _isReconnecting = false;
+    _reconnectAttempt = 0;
+    notifyListeners();
+  }
+
+  // ─── Connection watchdog ────────────────────────────────────────────
+
+  void _startWatchdog() {
+    _watchdogTimer?.cancel();
+    _lastServerMessageAt = DateTime.now();
+    _watchdogTimer = Timer.periodic(_watchdogInterval, (_) {
+      if (_isDisconnected || _intentionalDisconnect) {
+        _watchdogTimer?.cancel();
+        return;
+      }
+      if (_lastServerMessageAt == null) return;
+      final elapsed = DateTime.now().difference(_lastServerMessageAt!);
+      if (elapsed > _watchdogTimeout) {
+        debugPrint('[WATCHDOG] No server message for ${elapsed.inSeconds}s — treating as disconnected');
+        _watchdogTimer?.cancel();
+        handleDisconnect('Connection timed out');
+      }
+    });
+    debugPrint('[WATCHDOG] Started — timeout: ${_watchdogTimeout.inSeconds}s');
+  }
+
+  int get reconnectAttempt => _reconnectAttempt;
+
+  // ─── Message ACK helpers ────────────────────────────────────────────
+
+  String _generateMessageId() {
+    return '${DateTime.now().millisecondsSinceEpoch}-${DateTime.now().microsecond}';
+  }
+
+  /// Track an outgoing message. If no ACK arrives within 15s, the
+  /// connection is dead — move the message to the pending queue and
+  /// trigger disconnect.
+  void _trackPendingAck(String messageId) {
+    _pendingAcks.remove(messageId)?.cancel();
+    _pendingAcks[messageId] = Timer(_ackTimeout, () {
+      _handleAckTimeout(messageId);
+    });
+  }
+
+  /// Called when the PC acknowledges receipt of our message.
+  void _handleAckReceived(String messageId) {
+    _pendingAcks.remove(messageId)?.cancel();
+    debugPrint('[DEBUG] ACK received for message: $messageId');
+    final idx = _messages.indexWhere((m) => m.id == messageId);
+    if (idx >= 0) {
+      _messages[idx] = _messages[idx].copyWith(deliveryStatus: 'delivered');
+      notifyListeners();
+      _saveMessages();
+    }
+  }
+
+  /// Called when the ACK timer fires — message was not acknowledged.
+  /// The connection is likely dead.
+  void _handleAckTimeout(String messageId) {
+    _pendingAcks.remove(messageId);
+    debugPrint('[DEBUG] ACK timeout for message: $messageId');
+
+    final idx = _messages.indexWhere((m) => m.id == messageId);
+    if (idx >= 0) {
+      final msg = _messages[idx];
+      if (msg.deliveryStatus == 'sent') {
+        _messages[idx] = msg.copyWith(deliveryStatus: 'pending');
+        _pendingMessages.add(msg.copyWith(deliveryStatus: 'pending'));
+      }
+    }
+    notifyListeners();
+
+    // Connection is dead — trigger disconnect + reconnect
+    if (!_isDisconnected) {
+      handleDisconnect('Connection lost (message not acknowledged)');
+    }
+  }
+
+  /// Cancel all pending ACK timers and move unacked 'sent' messages to the
+  /// pending queue for retransmission. Called on disconnect, background, and dispose.
+  void _cancelAllPendingAcks() {
+    for (final messageId in _pendingAcks.keys.toList()) {
+      _pendingAcks[messageId]?.cancel();
+      final idx = _messages.indexWhere((m) => m.id == messageId);
+      if (idx >= 0 && _messages[idx].deliveryStatus == 'sent') {
+        _messages[idx] = _messages[idx].copyWith(deliveryStatus: 'pending');
+        _pendingMessages.add(_messages[idx]);
+      }
+    }
+    _pendingAcks.clear();
+  }
+
+  /// Add a messageId to the dedup set, capping the set size.
+  void _addRecentMessageId(String messageId) {
+    if (_recentMessageIds.length >= _maxRecentIds) {
+      _recentMessageIds.remove(_recentMessageIds.first);
+    }
+    _recentMessageIds.add(messageId);
+  }
+
+  // ─── Pending message flush (Phase 3) ─────────────────────────────────
+
+  void _flushPendingMessages() {
+    if (_pendingMessages.isEmpty) return;
+    debugPrint('[DEBUG] Flushing ${_pendingMessages.length} pending messages');
+    for (final msg in _pendingMessages) {
+      _sendJson({'type': 'text', 'content': msg.content, 'messageId': msg.id});
+      // Update status to 'sent' and track ACK
+      final idx = _messages.indexWhere((m) => m.id == msg.id);
+      if (idx >= 0) {
+        _messages[idx] = msg.copyWith(deliveryStatus: 'sent');
+      }
+      _trackPendingAck(msg.id);
+    }
+    _pendingMessages.clear();
+    notifyListeners();
+    _saveMessages();
   }
 
   // ─── Lifecycle ───────────────────────────────────────────────────────
 
-  void handleAppLifecycleChange(bool isInForeground) {
+  void handleAppLifecycleChange(bool isInForeground, {bool shouldCloseWs = true}) {
+    debugPrint('[LIFECYCLE] handleAppLifecycleChange: isInForeground=$isInForeground, shouldCloseWs=$shouldCloseWs');
+    debugPrint('[LIFECYCLE]   state: _isDisconnected=$_isDisconnected, _isReconnecting=$_isReconnecting, _intentionalDisconnect=$_intentionalDisconnect, _isConnected=${_isConnected()}');
     _isInForeground = isInForeground;
     notifyListeners();
 
     if (isInForeground) {
       if (!_intentionalDisconnect && !_isConnected()) {
+        debugPrint('[LIFECYCLE]   → calling _attemptReconnectIfEnabled');
         _attemptReconnectIfEnabled();
+      } else {
+        debugPrint('[LIFECYCLE]   → skipping reconnect (intentionalDisconnect=$_intentionalDisconnect, isConnected=${_isConnected()})');
       }
       checkAndSendClipboard();
-    } else {
+    } else if (shouldCloseWs) {
       saveCurrentClipboard();
+      // Close WebSocket cleanly when truly backgrounded (hidden/detached).
+      // Skipped for 'paused' state (quick-settings shade, split-screen, etc.)
+      if (_isConnected() && !_intentionalDisconnect) {
+        debugPrint('[LIFECYCLE]   → closing WS with code 4000');
+        // Set _isDisconnected BEFORE closing the socket. On the first
+        // (local, fresh) connection, channel.sink.close() can complete
+        // almost instantly, firing the onDone callback as a microtask
+        // before we reach the _isDisconnected = true line below. The
+        // onDone handler checks !_isDisconnected and would call
+        // handleDisconnect → _attemptReconnectIfEnabled, creating the
+        // phantom reconnect.
+        _isDisconnected = true;
+        _reconnectTimer?.cancel();
+        _reconnectTimer = null;
+        _isReconnecting = false;
+        _watchdogTimer?.cancel();
+        // Cancel pending ACKs and move unacked messages to pending queue.
+        // They'll be re-sent when the app returns to foreground.
+        _cancelAllPendingAcks();
+        channel.sink.close(4000, 'app_backgrounded');
+      }
     }
   }
 
@@ -319,15 +537,43 @@ class ChatNotifier extends ChangeNotifier {
 
   void _handleRawMessage(Map<String, dynamic> data) {
     final String msgType = data['type'] ?? '';
+    _lastServerMessageAt = DateTime.now();
+
+    // Handle ping — respond with pong (plaintext, before encrypted check)
+    if (msgType == 'ping') {
+      channel.sink.add(jsonEncode({'type': 'pong'}));
+      debugPrint('[DEBUG] Received ping, sent pong');
+      return;
+    }
 
     if (msgType == 'key-exchange') {
       debugPrint('[DEBUG] Received key-exchange from server');
+      if (_isReconnecting) {
+        _cancelReconnect();
+      }
+      _isDisconnected = false;
       _handleKeyExchange(data['publicKey'] as String);
+      // _flushPendingMessages is called from _handleKeyExchange after
+      // key exchange completes, so messages are sent encrypted.
       return;
     }
 
     if (msgType == 'handshake') {
       debugPrint('[DEBUG] Received handshake from server');
+      if (_isReconnecting) {
+        _cancelReconnect();
+      }
+      _isDisconnected = false;
+      _reconnectAttempt = 0;
+      return;
+    }
+
+    // --- ACK from PC (delivery confirmation for messages we sent) ---
+    if (msgType == 'message-ack') {
+      final messageId = data['messageId'] as String?;
+      if (messageId != null) {
+        _handleAckReceived(messageId);
+      }
       return;
     }
 
@@ -361,6 +607,7 @@ class ChatNotifier extends ChangeNotifier {
     try {
       await _crypto.computeSharedSecret(serverPublicKey);
       _keyExchangeComplete = true;
+      _everConnected = true;
       _keyExchangeTimeout?.cancel();
 
       final ourPublicKey = await _crypto.getPublicKeyBase64();
@@ -368,6 +615,28 @@ class ChatNotifier extends ChangeNotifier {
       debugPrint(
         '[DEBUG] Key exchange complete — encrypted channel established',
       );
+
+      // Flush pending messages now that encryption is established.
+      // Previously this was called before _handleKeyExchange, which sent
+      // messages as plaintext (keyExchangeComplete was still false).
+      _flushPendingMessages();
+
+      // Flush pending file (queued because file picker closed the WS)
+      if (_pendingFilePath != null && _pendingFilename != null) {
+        final path = _pendingFilePath!;
+        final name = _pendingFilename!;
+        _pendingFilePath = null;
+        _pendingFilename = null;
+        debugPrint('[DEBUG] Sending pending file after reconnect: $name');
+        // Remove the placeholder we added in sendFile — _sendFileActual
+        // will create a proper one with transfer tracking
+        _messages.removeWhere((m) =>
+            m.filename == name && m.sender == 'Me' &&
+            m.transferState == TransferState.pending);
+        sendFile(path, name);
+      }
+
+      _startWatchdog();
       notifyListeners();
     } catch (e) {
       debugPrint('[DEBUG] Key exchange failed: $e');
@@ -397,11 +666,26 @@ class ChatNotifier extends ChangeNotifier {
 
     if (_isDisconnected) return;
 
+    // --- Send ACK back to PC for delivery confirmation ---
+    final messageId = data['messageId'] as String?;
+    if (messageId != null) {
+      // Dedup: skip if already processed (original arrived but ACK was lost)
+      if (_recentMessageIds.contains(messageId)) {
+        debugPrint('[DEBUG] Duplicate message, re-ACKing without processing: $messageId');
+        _sendJson({'type': 'message-ack', 'messageId': messageId});
+        return;
+      }
+      _addRecentMessageId(messageId);
+      _sendJson({'type': 'message-ack', 'messageId': messageId});
+      debugPrint('[DEBUG] Sent ACK for message: $messageId');
+    }
+
     switch (msgType) {
       case 'text':
         final content = data['content'] ?? '';
         _messages.add(Message.text(content: content, sender: 'PC'));
         notifyListeners();
+        _scrollToBottom();
         _saveMessages();
         if (!_isInForeground) {
           showLocalNotification("New Message", content, payload: "COPY:$content");
@@ -416,6 +700,7 @@ class ChatNotifier extends ChangeNotifier {
         final url = data['url'] ?? '';
         _messages.add(Message.file(filename: filename, url: url, sender: 'PC'));
         notifyListeners();
+        _scrollToBottom();
         _saveMessages();
         if (!_isInForeground) {
           showLocalNotification("File Received", filename, payload: url);
@@ -673,13 +958,26 @@ class ChatNotifier extends ChangeNotifier {
   // ─── Sending ─────────────────────────────────────────────────────────
 
   void sendText(String text) {
-    if (text.isNotEmpty && !_isDisconnected) {
-      _sendJson({'type': 'text', 'content': text});
-      _messages.add(Message.text(content: text, sender: 'Me'));
-      notifyListeners();
-      _saveMessages();
-      _scrollToBottom();
+    if (text.isEmpty) return;
+    final messageId = _generateMessageId();
+
+    if (_isConnected()) {
+      _sendJson({'type': 'text', 'content': text, 'messageId': messageId});
+      final msg = Message.text(content: text, sender: 'Me')
+          .copyWith(id: messageId, deliveryStatus: 'sent');
+      _messages.add(msg);
+      _trackPendingAck(messageId);
+    } else {
+      // Queue locally with pending status
+      final msg = Message.text(content: text, sender: 'Me')
+          .copyWith(id: messageId, deliveryStatus: 'pending');
+      _pendingMessages.add(msg);
+      _messages.add(msg);
+      debugPrint('[DEBUG] Queued pending message (${_pendingMessages.length} pending)');
     }
+    notifyListeners();
+    _saveMessages();
+    _scrollToBottom();
   }
 
   void _sendJson(Map<String, dynamic> data) {
@@ -709,14 +1007,35 @@ class ChatNotifier extends ChangeNotifier {
     }
   }
 
-  Future<void> sendFile(String filePath, String filename) async {
-    if (_isDisconnected) return;
+  // Pending file send — saved when file picker returns while disconnected
+  // (file picker triggers app_backgrounded → WS closes → reconnects on return).
+  // The file is sent after key exchange completes on reconnect.
+  String? _pendingFilePath;
+  String? _pendingFilename;
 
-    if (!_keyExchangeComplete || !_crypto.isReady) {
-      debugPrint(
-        '[DEBUG] Key exchange not complete, falling back to HTTP upload',
+  Future<void> sendFile(String filePath, String filename) async {
+    if (_isDisconnected || !_keyExchangeComplete || !_crypto.isReady) {
+      // Can't send right now — likely because the file picker closed the WS.
+      // Queue the file and send after reconnect.
+      debugPrint('[DEBUG] sendFile: not connected, queuing file for after reconnect');
+      _pendingFilePath = filePath;
+      _pendingFilename = filename;
+
+      // Show placeholder immediately so the user sees their file
+      final isImage = RegExp(
+        r'\.(jpg|jpeg|png|gif|webp|bmp)$',
+        caseSensitive: false,
+      ).hasMatch(filename);
+      final placeholder = Message.transferPlaceholder(
+        filename: filename,
+        sender: 'Me',
+        type: isImage ? MessageType.image : MessageType.file,
+        transferState: TransferState.pending,
+        transferProgress: 0.0,
       );
-      await _uploadFileViaHttp(filePath, filename);
+      _messages.add(placeholder);
+      _scrollToBottom();
+      notifyListeners();
       return;
     }
 
@@ -798,6 +1117,7 @@ class ChatNotifier extends ChangeNotifier {
         'type': 'file-end',
         'filename': filename,
         'checksum': checksum,
+        'messageId': placeholder.id,
       });
 
       // Mark as complete — set url to local file path so it can be opened
@@ -807,8 +1127,11 @@ class ChatNotifier extends ChangeNotifier {
           transferState: TransferState.complete,
           transferProgress: 1.0,
           url: 'file://$filePath',
+          deliveryStatus: 'sent', // upgrades to 'delivered' on ACK
         ),
       );
+      // Track ACK — PC will send message-ack after reassembling the file
+      _trackPendingAck(placeholder.id);
       _lastNotifiedProgress = -1;
       notifyListeners();
       _saveMessages();
@@ -925,19 +1248,59 @@ class ChatNotifier extends ChangeNotifier {
 
   // ─── Disconnect ──────────────────────────────────────────────────────
 
+  /// Maps raw disconnect reasons / close codes to user-friendly messages.
+  String _friendlyDisconnectReason(String? rawReason, [int? closeCode]) {
+    if (rawReason != null && rawReason.isNotEmpty) {
+      if (rawReason.contains('Connection timed out')) {
+        return 'Connection timed out — PC may be offline';
+      }
+      if (rawReason.contains('Connection error')) {
+        return 'Could not reach PC — are you on the same WiFi?';
+      }
+      if (rawReason.contains('Connection lost')) {
+        return 'Connection lost — your WiFi may have dropped';
+      }
+      return rawReason;
+    }
+
+    switch (closeCode) {
+      case 1006:
+        return 'Connection lost — your WiFi may have dropped';
+      case 4001:
+        return 'Connection timed out — PC may be offline';
+      case 1000:
+        return 'PC disconnected';
+      case 1001:
+        return 'PC is shutting down';
+      default:
+        return 'Connection lost';
+    }
+  }
+
   void handleDisconnect(String reason) {
     if (_isDisconnected) return;
     _isDisconnected = true;
 
+    _reconnectTimer?.cancel(); // Cancel any in-progress reconnect
+    _watchdogTimer?.cancel();
     _incomingFile?._cleanup();
     _incomingFile = null;
     _keyExchangeTimeout?.cancel();
 
+    // Cancel pending ACK timers and move unacked messages to pending queue.
+    // These messages were sent but never confirmed — the connection is dead,
+    // so they'll be re-sent on reconnect. Dedup on the PC side prevents
+    // duplicates if the original message actually arrived.
+    _cancelAllPendingAcks();
+
     channel.sink.close();
+    _disconnectReason = _friendlyDisconnectReason(reason);
     notifyListeners();
 
-    // Navigation is handled by the widget layer
-    _disconnectReason = reason;
+    // Auto-reconnect unless intentional
+    if (!_intentionalDisconnect) {
+      _attemptReconnectIfEnabled();
+    }
   }
 
   void handleUserDisconnect() {
@@ -945,6 +1308,7 @@ class ChatNotifier extends ChangeNotifier {
     _isDisconnected = true;
     _intentionalDisconnect = true;
 
+    _cancelAllPendingAcks();
     _incomingFile?._cleanup();
     _incomingFile = null;
     _keyExchangeTimeout?.cancel();
@@ -954,6 +1318,16 @@ class ChatNotifier extends ChangeNotifier {
 
     channel.sink.close();
     notifyListeners();
+  }
+
+  /// Unpair from the PC — sends an unpair message so the PC removes this
+  /// device from its pairedDevices store, then disconnects.
+  void handleUnpair() {
+    if (!_isDisconnected) {
+      _sendJson({'type': 'unpair', 'deviceId': _deviceId});
+      debugPrint('[DEBUG] Sent unpair message to PC');
+    }
+    handleUserDisconnect();
   }
 
   String? _disconnectReason;
@@ -979,14 +1353,22 @@ class ChatNotifier extends ChangeNotifier {
     ShareHandler.setupListener();
 
     ShareHandler.registerSendCallback((data) {
-      _sendJson(data);
+      // Add messageId for ACK tracking on text messages
       if (data['type'] == 'text' && data['content'] != null) {
-        _messages.add(
-          Message.text(content: data['content'] as String, sender: 'Me'),
-        );
+        final messageId = _generateMessageId();
+        data['messageId'] = messageId;
+        _sendJson(data);
+        final msg = Message.text(
+          content: data['content'] as String, sender: 'Me',
+        ).copyWith(id: messageId, deliveryStatus: 'sent');
+        _messages.add(msg);
+        _trackPendingAck(messageId);
         notifyListeners();
         _saveMessages();
         _scrollToBottom();
+      } else {
+        // Non-text shares (files, etc.) — no ACK tracking
+        _sendJson(data);
       }
     });
 
@@ -1015,8 +1397,11 @@ class ChatNotifier extends ChangeNotifier {
 
   @override
   void dispose() {
+    _cancelAllPendingAcks();
     _clipboardPollTimer?.cancel();
+    _reconnectTimer?.cancel();
     _keyExchangeTimeout?.cancel();
+    _watchdogTimer?.cancel();
     _incomingFile?._cleanup();
     ShareHandler.unregisterSendCallback();
     _subscription?.cancel();

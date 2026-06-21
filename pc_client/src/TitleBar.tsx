@@ -3,9 +3,10 @@ import "./TitleBar.css";
 
 interface TitleBarProps {
   onSettingsClick?: () => void;
+  onQrClick?: () => void;
 }
 
-export function TitleBar({ onSettingsClick }: TitleBarProps) {
+export function TitleBar({ onSettingsClick, onQrClick }: TitleBarProps) {
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
@@ -34,6 +35,17 @@ export function TitleBar({ onSettingsClick }: TitleBarProps) {
         <span className="title-bar-title">Fast Share</span>
       </div>
       <div className="title-bar-actions">
+        {onQrClick && (
+          <button
+            className="title-bar-button qr"
+            onClick={onQrClick}
+            title="Pair Device / QR Code"
+          >
+            <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">
+              <path d="M2 2h6v6H2V2zm2 2v2h2V4H4zm8-2h6v6h-6V2zm2 2v2h2V4h-2zM2 12h6v6H2v-6zm2 2v2h2v-2H4zm8-2h2v2h-2v-2zm2 2h2v2h-2v-2zm-2 2h2v2h-2v-2zm4-2h2v2h-2v-2zm0 2h2v2h-2v-2z"/>
+            </svg>
+          </button>
+        )}
         <button
           className="title-bar-button folder"
           onClick={() => window.electronAPI.openFolder()}

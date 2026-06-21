@@ -7,14 +7,18 @@ import cors from "cors";
 import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { CryptoManager, isUnencryptedType } from "./crypto";
-import { processFileMessage, cleanupFileReassembly, FILE_CHUNK_SIZE } from "./file-transfer";
-import { deviceFcmTokens } from "./firebase";
+import { processFileMessage, cleanupFileReassembly, FILE_CHUNK_SIZE, sendFileEncrypted } from "./file-transfer";
 import { startClipboardSync } from "./clipboard-sync";
+import settingsStore from "./settings-store";
+import { pairDevice, updateDeviceLastSeen, removePairedDevice } from "./settings-store";
 
 // --- Configuration ---
 const WS_PORT = 8080;
 const HTTP_PORT = 8081;
 const KEY_EXCHANGE_TIMEOUT_MS = 5000; // 5 seconds
+const PING_INTERVAL = 30_000; // 30 seconds
+const PONG_TIMEOUT = 10_000; // 10 seconds to respond
+const ACK_TIMEOUT_MS = 15_000; // 15 seconds to wait for message ACK
 
 // --- Client Tracking ---
 interface ClientInfo {
@@ -23,6 +27,10 @@ interface ClientInfo {
   crypto: CryptoManager;
   keyExchangeComplete: boolean;
   keyExchangeTimer?: ReturnType<typeof setTimeout>;
+  // Heartbeat state
+  pongPending: boolean;
+  pingTimer?: ReturnType<typeof setInterval>;
+  pongTimeout?: ReturnType<typeof setTimeout>;
   // File chunk reassembly state
   incomingFile?: {
     filename: string;
@@ -43,6 +51,12 @@ interface QueuedMessage {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;
   timestamp: number;
+  // For file retransfer: the local path on the PC. When present, the flush
+  // logic uses sendFileEncrypted (chunked WS transfer) instead of sending
+  // the data directly — the queued data is just a URL reference that mobile
+  // can't reach.
+  filePath?: string;
+  messageType?: string;
 }
 
 // Map of device ID -> array of queued messages
@@ -79,13 +93,15 @@ function queueMessage(
   deviceId: string,
   type: string,
   data: QueuedMessage["data"],
+  filePath?: string,
+  messageType?: string,
 ) {
   if (!messageQueue.has(deviceId)) {
     messageQueue.set(deviceId, []);
   }
   const queue = messageQueue.get(deviceId);
   if (queue) {
-    queue.push({ type, data, timestamp: Date.now() });
+    queue.push({ type, data, timestamp: Date.now(), filePath, messageType });
     // Keep only last 100 messages in queue
     if (queue.length > 100) {
       queue.shift();
@@ -97,6 +113,84 @@ function getQueuedMessages(deviceId: string): QueuedMessage[] {
   const messages = messageQueue.get(deviceId) || [];
   messageQueue.delete(deviceId);
   return messages;
+}
+
+// --- Message ACK Tracking ---
+// When a message is sent over WebSocket, we track it here. If no ACK
+// arrives within ACK_TIMEOUT_MS, the message is queued + pushed via FCM.
+interface PendingAck {
+  timer: ReturnType<typeof setTimeout>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  message: any;
+  deviceId: string;
+  // For file transfers: the local file path so ACK timeout can queue
+  // a proper chunked retransfer instead of a URL reference.
+  filePath?: string;
+  messageType?: string;
+}
+
+const pendingAcks: Map<string, PendingAck> = new Map();
+const MAX_RECENT_IDS = 200;
+const recentMessageIds: Set<string> = new Set();
+
+function generateMessageId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+type GetMainWindowFnForAck = () => { webContents: { send: (channel: string, ...args: unknown[]) => void } } | null;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function trackPendingAck(messageId: string, message: any, deviceId: string, getMainWindow?: GetMainWindowFnForAck, filePath?: string, messageType?: string) {
+  // Clear any existing entry for this messageId (shouldn't happen normally)
+  clearPendingAck(messageId);
+
+  const timer = setTimeout(() => {
+    handleAckTimeout(messageId, getMainWindow);
+  }, ACK_TIMEOUT_MS);
+
+  pendingAcks.set(messageId, { timer, message, deviceId, filePath, messageType });
+}
+
+function clearPendingAck(messageId: string) {
+  const entry = pendingAcks.get(messageId);
+  if (entry) {
+    clearTimeout(entry.timer);
+    pendingAcks.delete(messageId);
+  }
+}
+
+function handleAckTimeout(messageId: string, getMainWindow?: GetMainWindowFnForAck) {
+  const entry = pendingAcks.get(messageId);
+  if (!entry) return; // Already cleared (ACK received)
+
+  pendingAcks.delete(messageId);
+  const { message, deviceId } = entry;
+  console.log(`[DEBUG] ACK timeout for message ${messageId} — queuing + pushing`);
+
+  // Queue for next reconnect
+  queueMessage(deviceId, message.type || "text", message, entry.filePath, entry.messageType);
+
+  // Send FCM push notification
+  const { sendPushNotification } = require("./firebase");
+  const text = typeof message.content === "string" ? message.content : "New message";
+  sendPushNotification(deviceId, {
+    title: "New Message",
+    body: text.length > 50 ? text.substring(0, 50) + "..." : text,
+    data: { type: message.type || "text" },
+  }).catch((err: unknown) => console.error("[DEBUG] Push notification failed:", err));
+
+  // Notify renderer — message stays at 'sent' (queued, will deliver on reconnect)
+  // The UI already shows 'sent', no status change needed
+  void getMainWindow;
+}
+
+function addRecentMessageId(messageId: string) {
+  if (recentMessageIds.size >= MAX_RECENT_IDS) {
+    // Remove oldest entry (Sets iterate in insertion order)
+    const oldest = recentMessageIds.values().next().value;
+    if (oldest) recentMessageIds.delete(oldest);
+  }
+  recentMessageIds.add(messageId);
 }
 
 // --- Encrypt and send to a single client ---
@@ -139,6 +233,41 @@ function broadcastToClients(message: object, excludeWs?: WebSocket) {
       client.send(JSON.stringify(message));
     }
   });
+}
+
+// --- Heartbeat (ping/pong) ---
+function startHeartbeat(client: ClientInfo) {
+  if (client.pingTimer) return; // already running
+
+  client.pingTimer = setInterval(() => {
+    if (client.ws.readyState !== WebSocket.OPEN) return;
+
+    client.ws.send(JSON.stringify({ type: "ping" }));
+    client.pongPending = true;
+
+    // Clear any previous pong timeout
+    if (client.pongTimeout) {
+      clearTimeout(client.pongTimeout);
+    }
+
+    client.pongTimeout = setTimeout(() => {
+      if (client.pongPending) {
+        console.error("[DEBUG] Heartbeat timeout — terminating connection");
+        client.ws.terminate();
+      }
+    }, PONG_TIMEOUT);
+  }, PING_INTERVAL);
+}
+
+function stopHeartbeat(client: ClientInfo) {
+  if (client.pingTimer) {
+    clearInterval(client.pingTimer);
+    client.pingTimer = undefined;
+  }
+  if (client.pongTimeout) {
+    clearTimeout(client.pongTimeout);
+    client.pongTimeout = undefined;
+  }
 }
 
 // --- Server Setup ---
@@ -195,7 +324,7 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
       `[DEBUG] HTTP Server running on http://${getLocalIp()}:${HTTP_PORT}`,
     );
     console.log(
-      "[DEBUG] HTTP Server listening on ALL interfaces (0.0.0.0):" + HTTP_PORT,
+      "DEBUG] HTTP Server listening on ALL interfaces (0.0.0.0):" + HTTP_PORT,
     );
   });
   console.log("[DEBUG] HTTP Server address:", httpServer.address());
@@ -227,6 +356,7 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
       ws,
       crypto: new CryptoManager(),
       keyExchangeComplete: false,
+      pongPending: false,
     };
     connectedClients.add(clientInfo);
 
@@ -252,29 +382,17 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
             clientInfo.deviceId = data.deviceId;
             console.log("[DEBUG] Device ID:", data.deviceId);
 
-            if (data.fcmToken) {
-              deviceFcmTokens.set(data.deviceId, data.fcmToken);
-              console.log(
-                "[DEBUG] Stored FCM token for device:",
-                data.deviceId,
-              );
-            }
+            settingsStore.set('lastConnectedDevice', data.deviceId || 'Unknown');
+            settingsStore.set('lastConnectedAt', new Date().toISOString());
 
-            // Send queued messages (they may be plaintext for legacy compat)
-            const queuedMessages = getQueuedMessages(data.deviceId);
-            if (queuedMessages.length > 0) {
-              console.log(
-                "[DEBUG] Sending",
-                queuedMessages.length,
-                "queued messages to device",
-              );
-              // Queued messages are sent as plaintext since key exchange isn't done yet
-              queuedMessages.forEach((msg) => {
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify(msg.data));
-                }
-              });
-            }
+            // Persist device pairing (with FCM token if provided)
+            pairDevice(data.deviceId, {
+              fcmToken: data.fcmToken,
+              name: data.device || 'Unknown',
+            });
+
+            // Queued messages are flushed after key exchange completes
+            // (see key-exchange handler below)
           }
 
           // Respond with handshake + our public key for key exchange
@@ -314,6 +432,51 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
               clientInfo.keyExchangeTimer = undefined;
             }
             console.log("[DEBUG] Key exchange complete — encrypted channel established");
+            // Start heartbeat now that the connection is fully established
+            startHeartbeat(clientInfo);
+
+            // Flush queued messages now that encryption is established.
+            // Previously these were sent as plaintext during handshake/reconnect
+            // (before key exchange), which meant mobile couldn't decrypt them.
+            // Now they're sent encrypted + tracked with ACKs.
+            if (clientInfo.deviceId) {
+              const queuedMessages = getQueuedMessages(clientInfo.deviceId);
+              if (queuedMessages.length > 0) {
+                console.log(
+                  "[DEBUG] Sending",
+                  queuedMessages.length,
+                  "queued messages after key exchange",
+                );
+                queuedMessages.forEach((msg) => {
+                  if (msg.filePath) {
+                    // File retransfer — use chunked WS transfer instead of
+                    // sending the URL reference (mobile can't reach the URL)
+                    const fileName = path.basename(msg.filePath);
+                    console.log("[DEBUG] Retransferring queued file:", fileName);
+                    sendFileEncrypted(
+                      clientInfo,
+                      msg.filePath,
+                      fileName,
+                      msg.messageType || "file",
+                      sendEncrypted,
+                      getMainWindow,
+                      msg.data?.messageId,
+                    );
+                  } else {
+                    sendEncrypted(clientInfo, msg.data);
+                    // Track ACK if messageId is present
+                    if (msg.data?.messageId) {
+                      trackPendingAck(
+                        msg.data.messageId,
+                        msg.data,
+                        clientInfo.deviceId!,
+                        getMainWindow,
+                      );
+                    }
+                  }
+                });
+              }
+            }
           } catch (error) {
             console.error("[DEBUG] Key exchange failed:", error);
             ws.close(4002, "Key exchange failed");
@@ -325,34 +488,53 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
           console.log("[DEBUG] Client reconnecting, device ID:", data.deviceId);
           if (data.deviceId) {
             clientInfo.deviceId = data.deviceId;
-            const queuedMessages = getQueuedMessages(data.deviceId);
-            if (queuedMessages.length > 0) {
-              console.log(
-                "[DEBUG] Sending",
-                queuedMessages.length,
-                "queued messages on reconnect",
-              );
-              queuedMessages.forEach((msg) => {
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify(msg.data));
-                }
-              });
-            }
+
+            // Update pairing info — only refresh FCM token, don't overwrite name.
+            // The name is set during initial handshake. Reconnect doesn't send it,
+            // so data.device is undefined and would overwrite the stored name with
+            // 'Unknown'.
+            pairDevice(data.deviceId, {
+              fcmToken: data.fcmToken,
+              name: data.device,  // undefined → pairDevice keeps existing name
+            });
           }
-          // Re-do key exchange on reconnect — send new public key
-          const newClientInfo: ClientInfo = {
-            ws,
-            deviceId: clientInfo.deviceId,
-            crypto: new CryptoManager(),
-            keyExchangeComplete: false,
-          };
-          // Replace the client info in the set
-          connectedClients.delete(clientInfo);
-          connectedClients.add(newClientInfo);
+          // Reset clientInfo in-place for reconnect.
+          // We must NOT create a new object — the ws.on('message') closure
+          // captures the original clientInfo reference. If we swap it out,
+          // the key-exchange response from mobile updates the OLD object,
+          // and the new object's keyExchangeTimer fires after 5s killing the socket.
+          stopHeartbeat(clientInfo);
+          if (clientInfo.keyExchangeTimer) {
+            clearTimeout(clientInfo.keyExchangeTimer);
+            clientInfo.keyExchangeTimer = undefined;
+          }
+          clientInfo.crypto = new CryptoManager();
+          clientInfo.keyExchangeComplete = false;
+          clientInfo.pongPending = false;
+
+          // Save last-connected info for reconnect
+          if (data.deviceId) {
+            settingsStore.set('lastConnectedDevice', data.deviceId || 'Unknown');
+            settingsStore.set('lastConnectedAt', new Date().toISOString());
+          }
+
+          // Send handshake confirmation for reconnect
+          ws.send(
+            JSON.stringify({
+              type: "handshake",
+              message: "Reconnected to PC",
+            }),
+          );
+
+          // Notify renderer that mobile has reconnected
+          getMainWindow()?.webContents.send("ws-message", {
+            type: "handshake",
+            message: "Mobile Reconnected",
+          });
 
           // Set key exchange timeout for reconnected client
-          newClientInfo.keyExchangeTimer = setTimeout(() => {
-            if (!newClientInfo.keyExchangeComplete) {
+          clientInfo.keyExchangeTimer = setTimeout(() => {
+            if (!clientInfo.keyExchangeComplete) {
               console.error("[DEBUG] Key exchange timeout on reconnect — closing connection");
               ws.close(4001, "Key exchange timeout");
             }
@@ -361,15 +543,53 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
           ws.send(
             JSON.stringify({
               type: "key-exchange",
-              publicKey: newClientInfo.crypto.getPublicKeyBase64(),
+              publicKey: clientInfo.crypto.getPublicKeyBase64(),
             }),
           );
           console.log("[DEBUG] Sent new key-exchange for reconnect");
           return;
         }
 
+        // --- Unencrypted: message-ack (delivery confirmation) ---
+        if (data.type === "message-ack") {
+          console.log("[DEBUG] Received ACK for message:", data.messageId);
+          clearPendingAck(data.messageId);
+          getMainWindow()?.webContents.send("delivery-status", {
+            messageId: data.messageId,
+            status: "delivered",
+          });
+          return;
+        }
+
+        if (data.type === "pong") {
+          clientInfo.pongPending = false;
+          if (clientInfo.pongTimeout) {
+            clearTimeout(clientInfo.pongTimeout);
+            clientInfo.pongTimeout = undefined;
+          }
+          return;
+        }
+
+        if (data.type === "unpair") {
+          console.log("[DEBUG] Client unpairing:", data.deviceId);
+          if (data.deviceId) {
+            removePairedDevice(data.deviceId);
+          }
+          stopHeartbeat(clientInfo);
+          cleanupFileReassembly(clientInfo);
+          connectedClients.delete(clientInfo);
+          // Notify renderer — device was explicitly unpaired
+          getMainWindow()?.webContents.send("ws-message", {
+            type: "unpaired",
+            deviceId: data.deviceId,
+          });
+          ws.close();
+          return;
+        }
+
         if (data.type === "disconnect") {
           console.log("[DEBUG] Client sent disconnect message:", data.reason);
+          stopHeartbeat(clientInfo);
           getMainWindow()?.webContents.send("ws-disconnect", {
             reason: data.reason || "Mobile client disconnected",
           });
@@ -401,6 +621,20 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
           const inner = decrypted as any;
           console.log("[DEBUG] Decrypted inner message type:", inner.type);
 
+          // --- Send ACK back to mobile (delivery confirmation) ---
+          if (inner.messageId) {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "message-ack", messageId: inner.messageId }));
+              console.log("[DEBUG] Sent ACK for message:", inner.messageId);
+            }
+            // Dedup: skip processing if we've already seen this message
+            if (recentMessageIds.has(inner.messageId)) {
+              console.log("[DEBUG] Duplicate message, skipping processing:", inner.messageId);
+              return;
+            }
+            addRecentMessageId(inner.messageId);
+          }
+
           // Process the decrypted inner message
           processFileMessage(clientInfo, inner, getMainWindow);
           return;
@@ -423,34 +657,34 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
       );
 
       // Clean up timers
+      stopHeartbeat(clientInfo);
       if (clientInfo.keyExchangeTimer) {
         clearTimeout(clientInfo.keyExchangeTimer);
       }
       cleanupFileReassembly(clientInfo);
       connectedClients.delete(clientInfo);
 
-      const isAbnormalClosure = code === 1006;
-      const isIntentionalDisconnect = code === 1000 || code === 1001;
+      // Update lastSeenAt for paired device
+      if (clientInfo.deviceId) {
+        updateDeviceLastSeen(clientInfo.deviceId);
+      }
 
-      if (!isAbnormalClosure) {
-        getMainWindow()?.webContents.send("ws-disconnect", {
-          reason: isIntentionalDisconnect
+      // Always notify renderer — no more special casing for 1006
+      const isIntentional = code === 1000 || code === 1001 || code === 4000;
+      getMainWindow()?.webContents.send("ws-disconnect", {
+        reason: code === 4000
+          ? "Mobile went to background"
+          : isIntentional
             ? "Connection closed"
             : `Connection lost (code: ${code})`,
-          deviceId: clientInfo.deviceId,
-        });
-      } else {
-        console.log(
-          "[DEBUG] Abnormal closure detected - mobile likely in background. Keeping UI connected.",
-        );
-        console.log(
-          "[DEBUG] Messages will be queued and sent via push notification.",
-        );
-      }
+        deviceId: clientInfo.deviceId,
+        code,
+      });
     });
 
     ws.on("error", (error) => {
       console.error("[DEBUG] WebSocket ERROR:", error);
+      stopHeartbeat(clientInfo);
       if (clientInfo.keyExchangeTimer) {
         clearTimeout(clientInfo.keyExchangeTimer);
       }
@@ -474,6 +708,10 @@ export {
   sendEncryptedToClients,
   broadcastToClients,
   queueMessage,
+  stopHeartbeat,
+  generateMessageId,
+  trackPendingAck,
+  clearPendingAck,
   wss,
   WS_PORT,
   HTTP_PORT,

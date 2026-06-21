@@ -171,12 +171,21 @@ class MessageBubble extends StatelessWidget {
         if (_showTimestamp)
           Padding(
             padding: const EdgeInsets.only(top: 4, right: 4),
-            child: Text(
-              formatMessageTime(message.timestamp),
-              style: TextStyle(
-                fontSize: 10,
-                color: isMe ? Colors.blue[200] : Colors.grey[500],
-              ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  formatMessageTime(message.timestamp),
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: isMe ? Colors.blue[200] : Colors.grey[500],
+                  ),
+                ),
+                if (isMe && message.deliveryStatus.isNotEmpty) ...[
+                  const SizedBox(width: 4),
+                  _buildDeliveryTick(),
+                ],
+              ],
             ),
           ),
       ],
@@ -223,6 +232,20 @@ class MessageBubble extends StatelessWidget {
         },
       ),
     );
+  }
+
+  /// Build delivery status tick indicator for sent messages
+  Widget _buildDeliveryTick() {
+    switch (message.deliveryStatus) {
+      case 'pending':
+        return const Icon(Icons.schedule, size: 12, color: Colors.white54);
+      case 'sent':
+        return const Icon(Icons.check, size: 14, color: Colors.white70);
+      case 'delivered':
+        return const Icon(Icons.done_all, size: 14, color: Colors.lightBlueAccent);
+      default:
+        return const SizedBox.shrink();
+    }
   }
 
   /// Build a progress overlay widget for file/image transfers

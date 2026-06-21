@@ -7,10 +7,21 @@ export function useConnection() {
     null,
   );
   const [selectedIp, setSelectedIp] = useState<string>("");
-  const [isConnected, setIsConnected] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
 
-  // Get connection info from Electron Main
+  // Two independent booleans — single source of truth for each concern.
+  // hasPairedDevice: identity (loaded once, updated only on pair/unpair)
+  // isConnected: transport (set directly by WS events, no async queries)
+  const [hasPairedDevice, setHasPairedDevice] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  const [pairedDevice, setPairedDevice] = useState<{ id: string; name: string; lastSeenAt: string } | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [lastConnected, setLastConnected] = useState<{ device: string; at: string } | null>(null);
+  // Bumped whenever a device connects/disconnects/unpairs so the PairingPanel
+  // knows to re-fetch its paired-devices list even while open.
+  const [pairingRefreshTrigger, setPairingRefreshTrigger] = useState(0);
+
+  // Get connection info and initial paired-device state from Electron Main.
+  // These run ONCE on mount — no async queries inside event handlers.
   useEffect(() => {
     window.electronAPI.getConnectionInfo().then((info) => {
       setConnectionInfo(info);
@@ -20,9 +31,23 @@ export function useConnection() {
         setSelectedIp(pref || info.ips[0]);
       }
     });
+
+    window.electronAPI.getLastConnected().then(setLastConnected);
+
+    // Load paired device state ONCE — this is the only place we query it.
+    // Subsequent updates come from WS events, not async queries.
+    window.electronAPI.getPairedDevices().then((devices) => {
+      const entries = Object.entries(devices);
+      if (entries.length > 0) {
+        const [id, info] = entries[0];
+        setPairedDevice({ id, name: info.name, lastSeenAt: info.lastSeenAt });
+        setHasPairedDevice(true);
+      }
+    });
   }, []);
 
-  // Listen for WS messages, disconnects, and file transfers
+  // Listen for WS messages, disconnects, and file transfers.
+  // State transitions are SYNCHRONOUS — no async getPairedDevices() calls.
   useEffect(() => {
     const cleanupWsMessage = window.electronAPI.onWsMessage((data) => {
       if (data.type === "text") {
@@ -36,11 +61,33 @@ export function useConnection() {
         };
         setMessages((prev) => [...prev, newMessage]);
       } else if (data.type === "handshake") {
+        // Device connected (possibly a new pairing). Set hasPairedDevice
+        // synchronously so the UI enables immediately, then fetch the
+        // device name for display. This async call is safe — we're reading
+        // display data after a definitive event, not using it for state
+        // transitions (the race-prone pattern we eliminated).
         setIsConnected(true);
+        setHasPairedDevice(true);
+        setPairingRefreshTrigger((n) => n + 1);
+        window.electronAPI.getLastConnected().then(setLastConnected);
+        window.electronAPI.getPairedDevices().then((devices) => {
+          const entries = Object.entries(devices);
+          if (entries.length > 0) {
+            const [id, info] = entries[0];
+            setPairedDevice({ id, name: info.name, lastSeenAt: info.lastSeenAt });
+          }
+        });
       } else if (data.type === "ping") {
         window.electronAPI.sendPong();
       } else if (data.type === "disconnect") {
+        // Mobile went to background — connection lost
         setIsConnected(false);
+      } else if (data.type === "unpaired") {
+        // Mobile explicitly unpaired — remove from paired state
+        setHasPairedDevice(false);
+        setIsConnected(false);
+        setPairedDevice(null);
+        setPairingRefreshTrigger((n) => n + 1);
       } else if (data.type === "image") {
         console.log(
           "[DEBUG] Image message received via WS, waiting for HTTP upload",
@@ -53,8 +100,9 @@ export function useConnection() {
     });
 
     const cleanupWsDisconnect = window.electronAPI.onWsDisconnect(() => {
-      console.log("[DEBUG] Disconnect event received");
+      // Connection lost — direct, no async query
       setIsConnected(false);
+      window.electronAPI.getLastConnected().then(setLastConnected);
     });
 
     // --- Incoming file transfer: create placeholder on start ---
@@ -173,6 +221,17 @@ export function useConnection() {
         );
       });
 
+    // --- Delivery status (ACK) updates ---
+    const cleanupDeliveryStatus = window.electronAPI.onDeliveryStatus((data) => {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === data.messageId
+            ? { ...msg, deliveryStatus: data.status as "sent" | "delivered" }
+            : msg
+        )
+      );
+    });
+
     return () => {
       cleanupWsMessage();
       cleanupWsDisconnect();
@@ -181,6 +240,7 @@ export function useConnection() {
       cleanupFileReceived();
       cleanupFileSentStart();
       cleanupFileSentComplete();
+      cleanupDeliveryStatus();
     };
   }, [connectionInfo?.httpPort]);
 
@@ -203,10 +263,13 @@ export function useConnection() {
     selectedIp,
     setSelectedIp,
     isConnected,
-    setIsConnected,
+    hasPairedDevice,
+    pairedDevice,
     messages,
     setMessages,
     disconnect,
     getQrData,
+    lastConnected,
+    pairingRefreshTrigger,
   };
 }

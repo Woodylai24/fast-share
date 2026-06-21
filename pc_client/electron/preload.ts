@@ -2,11 +2,11 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 contextBridge.exposeInMainWorld("electronAPI", {
   getConnectionInfo: () => ipcRenderer.invoke("get-connection-info"),
-  sendText: (text: string) => ipcRenderer.send("send-text", text),
+  sendText: (text: string, messageId: string) => ipcRenderer.send("send-text", text, messageId),
   sendPong: () => ipcRenderer.send("send-pong"),
   disconnectClient: () => ipcRenderer.send("disconnect-client"),
-  offerFile: (filePath: string, ip: string) =>
-    ipcRenderer.send("offer-file", filePath, ip),
+  offerFile: (filePath: string, ip: string, messageId: string) =>
+    ipcRenderer.send("offer-file", filePath, ip, messageId),
   selectFile: () => ipcRenderer.invoke("select-file"),
   openExternal: (url: string) => ipcRenderer.send("open-external", url),
   openPath: (filePath: string) => ipcRenderer.send("open-path", filePath),
@@ -126,5 +126,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     const listener = () => callback();
     ipcRenderer.on("play-notification-sound", listener);
     return () => ipcRenderer.removeListener("play-notification-sound", listener);
+  },
+  // Last connected device info
+  getLastConnected: () => ipcRenderer.invoke('get-last-connected'),
+  // Paired device management
+  getPairedDevices: () => ipcRenderer.invoke('get-paired-devices'),
+  unpairDevice: (deviceId: string) => ipcRenderer.invoke('unpair-device', deviceId),
+  // Delivery status (ACK) updates from main process
+  onDeliveryStatus: (callback: (data: { messageId: string; status: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: { messageId: string; status: string }) => callback(value);
+    ipcRenderer.on("delivery-status", listener);
+    return () => ipcRenderer.removeListener("delivery-status", listener);
   },
 });
