@@ -621,19 +621,20 @@ class ChatNotifier extends ChangeNotifier {
       // messages as plaintext (keyExchangeComplete was still false).
       _flushPendingMessages();
 
-      // Flush pending file (queued because file picker closed the WS)
-      if (_pendingFilePath != null && _pendingFilename != null) {
-        final path = _pendingFilePath!;
-        final name = _pendingFilename!;
-        _pendingFilePath = null;
-        _pendingFilename = null;
-        debugPrint('[DEBUG] Sending pending file after reconnect: $name');
-        // Remove the placeholder we added in sendFile — _sendFileActual
-        // will create a proper one with transfer tracking
-        _messages.removeWhere((m) =>
-            m.filename == name && m.sender == 'Me' &&
-            m.transferState == TransferState.pending);
-        sendFile(path, name);
+      // Flush pending files (queued because file picker/share closed the WS).
+      // Send sequentially — PC receiver only tracks one incoming file at a time.
+      if (_pendingFiles.isNotEmpty) {
+        final files = List<({String path, String name})>.from(_pendingFiles);
+        _pendingFiles.clear();
+        for (final f in files) {
+          debugPrint('[DEBUG] Sending pending file after reconnect: ${f.name}');
+          // Remove the placeholder we added in sendFile — sendFile will
+          // create a proper one with transfer tracking
+          _messages.removeWhere((m) =>
+              m.filename == f.name && m.sender == 'Me' &&
+              m.transferState == TransferState.pending);
+          await sendFile(f.path, f.name);
+        }
       }
 
       _startWatchdog();
@@ -1007,19 +1008,16 @@ class ChatNotifier extends ChangeNotifier {
     }
   }
 
-  // Pending file send — saved when file picker returns while disconnected
-  // (file picker triggers app_backgrounded → WS closes → reconnects on return).
-  // The file is sent after key exchange completes on reconnect.
-  String? _pendingFilePath;
-  String? _pendingFilename;
+  // Pending files — saved when file picker/share closes the WS mid-send.
+  // Each entry stores the path + filename to flush after reconnect.
+  final List<({String path, String name})> _pendingFiles = [];
 
   Future<void> sendFile(String filePath, String filename) async {
     if (_isDisconnected || !_keyExchangeComplete || !_crypto.isReady) {
       // Can't send right now — likely because the file picker closed the WS.
       // Queue the file and send after reconnect.
       debugPrint('[DEBUG] sendFile: not connected, queuing file for after reconnect');
-      _pendingFilePath = filePath;
-      _pendingFilename = filename;
+      _pendingFiles.add((path: filePath, name: filename));
 
       // Show placeholder immediately so the user sees their file
       final isImage = RegExp(
