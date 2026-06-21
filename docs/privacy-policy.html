@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fast Share — Privacy Policy</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 760px; margin: 0 auto; padding: 32px 24px; color: #1a1a1a; line-height: 1.6; }
+  h1 { font-size: 1.6em; }
+  h2 { margin-top: 1.8em; }
+  .updated { color: #666; font-size: 0.9em; }
+  code { background: #f0f0f0; padding: 2px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h1>Fast Share — Privacy Policy</h1>
+<p class="updated">Last updated: June 22, 2026</p>
+
+<p>Fast Share is a local network app for sharing files, images, and text between
+your own devices. This policy explains what information the app handles and how.</p>
+
+<h2>The short version</h2>
+<p>Fast Share does <strong>not</strong> collect, sell, or share your personal data.
+Your files and messages are sent <strong>directly between your own devices</strong> over
+your local Wi-Fi, protected by end-to-end encryption. The only thing that leaves
+your device is a lightweight push notification when the receiving device is offline.</p>
+
+<h2>What data the app processes</h2>
+<ul>
+  <li><strong>Files, images, and text you share</strong> — transferred directly over your local Wi-Fi network between your paired devices. All content is encrypted in transit (AES-GCM) and never passes through our servers.</li>
+  <li><strong>Device pairing information</strong> — your device name and a pairing token are stored locally on your devices so they can reconnect automatically.</li>
+  <li><strong>Message history</strong> — your shared messages are stored locally on each device so you can review them later. This never leaves your devices.</li>
+</ul>
+
+<h2>Third-party services</h2>
+<ul>
+  <li><strong>Firebase Cloud Messaging (FCM)</strong> — used solely to deliver a push notification to your paired device when it is offline and a message is waiting. FCM receives only a notification trigger (e.g. "you have a new message") — <strong>not</strong> the contents of your files or messages. See <a href="https://firebase.google.com/support/privacy">Firebase's privacy policy</a>.</li>
+  <li><strong>AI summarization (optional)</strong> — if you enable and configure the optional AI feature with your own API key, message text you choose to summarize is sent directly to the API provider you configured. This is entirely optional and only happens when you trigger it.</li>
+</ul>
+
+<h2>What we do not do</h2>
+<ul>
+  <li>We do <strong>not</strong> collect analytics, telemetry, or usage tracking.</li>
+  <li>We do <strong>not</strong> sell, rent, or share your data with third parties.</li>
+  <li>We do <strong>not</strong> have access to your files or messages — they are encrypted and travel peer-to-peer.</li>
+</ul>
+
+<h2>Data storage</h2>
+<p>All of your data stays on your devices. Received files are saved to a folder
+you control (a <code>FastShare</code> folder). You can delete them at any time
+through your file manager. Uninstalling the app removes its local data.</p>
+
+<h2>Children's privacy</h2>
+<p>Fast Share is not directed at children and we do not knowingly collect data
+from children.</p>
+
+<h2>Changes to this policy</h2>
+<p>If we materially change this policy, we will update this page.</p>
+
+<h2>Contact</h2>
+<p>For questions about this privacy policy, open an issue at
+<a href="https://github.com/Woodylai24/fast-share/issues">github.com/Woodylai24/fast-share/issues</a>.</p>
+</body>
+</html>
