@@ -621,6 +621,21 @@ class ChatNotifier extends ChangeNotifier {
       // messages as plaintext (keyExchangeComplete was still false).
       _flushPendingMessages();
 
+      // Flush pending file (queued because file picker closed the WS)
+      if (_pendingFilePath != null && _pendingFilename != null) {
+        final path = _pendingFilePath!;
+        final name = _pendingFilename!;
+        _pendingFilePath = null;
+        _pendingFilename = null;
+        debugPrint('[DEBUG] Sending pending file after reconnect: $name');
+        // Remove the placeholder we added in sendFile — _sendFileActual
+        // will create a proper one with transfer tracking
+        _messages.removeWhere((m) =>
+            m.filename == name && m.sender == 'Me' &&
+            m.transferState == TransferState.pending);
+        sendFile(path, name);
+      }
+
       _startWatchdog();
       notifyListeners();
     } catch (e) {
@@ -992,14 +1007,35 @@ class ChatNotifier extends ChangeNotifier {
     }
   }
 
-  Future<void> sendFile(String filePath, String filename) async {
-    if (_isDisconnected) return;
+  // Pending file send — saved when file picker returns while disconnected
+  // (file picker triggers app_backgrounded → WS closes → reconnects on return).
+  // The file is sent after key exchange completes on reconnect.
+  String? _pendingFilePath;
+  String? _pendingFilename;
 
-    if (!_keyExchangeComplete || !_crypto.isReady) {
-      debugPrint(
-        '[DEBUG] Key exchange not complete, falling back to HTTP upload',
+  Future<void> sendFile(String filePath, String filename) async {
+    if (_isDisconnected || !_keyExchangeComplete || !_crypto.isReady) {
+      // Can't send right now — likely because the file picker closed the WS.
+      // Queue the file and send after reconnect.
+      debugPrint('[DEBUG] sendFile: not connected, queuing file for after reconnect');
+      _pendingFilePath = filePath;
+      _pendingFilename = filename;
+
+      // Show placeholder immediately so the user sees their file
+      final isImage = RegExp(
+        r'\.(jpg|jpeg|png|gif|webp|bmp)$',
+        caseSensitive: false,
+      ).hasMatch(filename);
+      final placeholder = Message.transferPlaceholder(
+        filename: filename,
+        sender: 'Me',
+        type: isImage ? MessageType.image : MessageType.file,
+        transferState: TransferState.pending,
+        transferProgress: 0.0,
       );
-      await _uploadFileViaHttp(filePath, filename);
+      _messages.add(placeholder);
+      _scrollToBottom();
+      notifyListeners();
       return;
     }
 
@@ -1081,6 +1117,7 @@ class ChatNotifier extends ChangeNotifier {
         'type': 'file-end',
         'filename': filename,
         'checksum': checksum,
+        'messageId': placeholder.id,
       });
 
       // Mark as complete — set url to local file path so it can be opened
@@ -1090,8 +1127,11 @@ class ChatNotifier extends ChangeNotifier {
           transferState: TransferState.complete,
           transferProgress: 1.0,
           url: 'file://$filePath',
+          deliveryStatus: 'sent', // upgrades to 'delivered' on ACK
         ),
       );
+      // Track ACK — PC will send message-ack after reassembling the file
+      _trackPendingAck(placeholder.id);
       _lastNotifiedProgress = -1;
       notifyListeners();
       _saveMessages();

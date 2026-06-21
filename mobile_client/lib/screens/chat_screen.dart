@@ -144,12 +144,14 @@ class _ConnectedScreenState extends State<ConnectedScreen>
 
   Future<void> _pickAndSendFile() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles();
-    if (result == null || _notifier.isDisconnected) return;
+    if (result == null) return;
 
     final filePath = result.files.single.path!;
     final filename = result.files.single.name;
 
     try {
+      // sendFile handles the disconnected case by queuing the file
+      // for after reconnect (file picker triggers app_backgrounded).
       await _notifier.sendFile(filePath, filename);
     } catch (e) {
       debugPrint('[DEBUG] File send failed: $e');

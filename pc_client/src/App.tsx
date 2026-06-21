@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { TitleBar } from "./TitleBar";
 import { PairingPanel } from "./components/PairingPanel";
 import { Settings } from "./Settings";
@@ -55,12 +55,14 @@ function App() {
     messageListRef,
   } = useMessages({ messages, setMessages, isConnected });
 
-  // Auto-close pairing panel when a device connects
+  // Auto-close pairing panel when a NEW device pairs (not on reconnect)
+  const prevHasPaired = useRef(false);
   useEffect(() => {
-    if (isConnected && showQr) {
+    if (hasPairedDevice && !prevHasPaired.current && showQr) {
       setShowQr(false);
     }
-  }, [isConnected, showQr]);
+    prevHasPaired.current = hasPairedDevice;
+  }, [hasPairedDevice, showQr]);
 
   // Check API key
   const checkApiKey = useCallback(async () => {
@@ -142,7 +144,7 @@ function App() {
     e.stopPropagation();
     setIsDragging(false);
 
-    if (!isConnected) return;
+    if (!hasPairedDevice) return;
 
     const files = Array.from(e.dataTransfer.files);
     if (files.length > 0) {
@@ -165,14 +167,14 @@ function App() {
   const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!isConnected) return;
+    if (!hasPairedDevice) return;
     setIsDragging(true);
   };
 
   const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!isConnected) return;
+    if (!hasPairedDevice) return;
     if (e.currentTarget.contains(e.relatedTarget as Node)) return;
     setIsDragging(false);
   };
@@ -225,7 +227,7 @@ function App() {
         onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}
       >
-        {isConnected && (
+        {hasPairedDevice && (
           <FileInput
             isDragging={isDragging}
             onDrop={handleDrop}
