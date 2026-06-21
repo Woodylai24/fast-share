@@ -260,7 +260,7 @@ function registerIpcHandlers(
         sentViaWs = true;
         // Track ACK — mobile confirms receipt after reassembling the file
         if (messageId && client.deviceId) {
-          trackPendingAck(messageId, { type: messageType, filename: fileName, url: fileUrl }, client.deviceId);
+          trackPendingAck(messageId, { type: messageType, filename: fileName, url: fileUrl }, client.deviceId, undefined, destPath, messageType);
         }
       }
     });
@@ -283,11 +283,13 @@ function registerIpcHandlers(
       }
     });
 
-    // If no clients connected, queue and send push notification
+    // If no clients connected, queue for chunked retransfer + send push notification
     if (!sentViaWs && !sentLegacy) {
       const pairedDevices = getAllPairedDevices();
       for (const [deviceId] of Object.entries(pairedDevices)) {
-        queueMessage(deviceId, messageType, legacyMessage);
+        // Queue with filePath so the flush logic does a proper chunked
+        // WS retransfer on reconnect, not a URL reference the mobile can't reach.
+        queueMessage(deviceId, messageType, legacyMessage, destPath, messageType);
         await sendPushNotification(deviceId, {
           title: messageType === "image" ? "Image Received" : "File Received",
           body: fileName,

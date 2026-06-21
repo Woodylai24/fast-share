@@ -7,7 +7,7 @@ import cors from "cors";
 import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { CryptoManager, isUnencryptedType } from "./crypto";
-import { processFileMessage, cleanupFileReassembly, FILE_CHUNK_SIZE } from "./file-transfer";
+import { processFileMessage, cleanupFileReassembly, FILE_CHUNK_SIZE, sendFileEncrypted } from "./file-transfer";
 import { startClipboardSync } from "./clipboard-sync";
 import settingsStore from "./settings-store";
 import { pairDevice, updateDeviceLastSeen, removePairedDevice } from "./settings-store";
@@ -51,6 +51,12 @@ interface QueuedMessage {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;
   timestamp: number;
+  // For file retransfer: the local path on the PC. When present, the flush
+  // logic uses sendFileEncrypted (chunked WS transfer) instead of sending
+  // the data directly — the queued data is just a URL reference that mobile
+  // can't reach.
+  filePath?: string;
+  messageType?: string;
 }
 
 // Map of device ID -> array of queued messages
@@ -87,13 +93,15 @@ function queueMessage(
   deviceId: string,
   type: string,
   data: QueuedMessage["data"],
+  filePath?: string,
+  messageType?: string,
 ) {
   if (!messageQueue.has(deviceId)) {
     messageQueue.set(deviceId, []);
   }
   const queue = messageQueue.get(deviceId);
   if (queue) {
-    queue.push({ type, data, timestamp: Date.now() });
+    queue.push({ type, data, timestamp: Date.now(), filePath, messageType });
     // Keep only last 100 messages in queue
     if (queue.length > 100) {
       queue.shift();
@@ -115,6 +123,10 @@ interface PendingAck {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   message: any;
   deviceId: string;
+  // For file transfers: the local file path so ACK timeout can queue
+  // a proper chunked retransfer instead of a URL reference.
+  filePath?: string;
+  messageType?: string;
 }
 
 const pendingAcks: Map<string, PendingAck> = new Map();
@@ -128,7 +140,7 @@ function generateMessageId(): string {
 type GetMainWindowFnForAck = () => { webContents: { send: (channel: string, ...args: unknown[]) => void } } | null;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function trackPendingAck(messageId: string, message: any, deviceId: string, getMainWindow?: GetMainWindowFnForAck) {
+function trackPendingAck(messageId: string, message: any, deviceId: string, getMainWindow?: GetMainWindowFnForAck, filePath?: string, messageType?: string) {
   // Clear any existing entry for this messageId (shouldn't happen normally)
   clearPendingAck(messageId);
 
@@ -136,7 +148,7 @@ function trackPendingAck(messageId: string, message: any, deviceId: string, getM
     handleAckTimeout(messageId, getMainWindow);
   }, ACK_TIMEOUT_MS);
 
-  pendingAcks.set(messageId, { timer, message, deviceId });
+  pendingAcks.set(messageId, { timer, message, deviceId, filePath, messageType });
 }
 
 function clearPendingAck(messageId: string) {
@@ -156,7 +168,7 @@ function handleAckTimeout(messageId: string, getMainWindow?: GetMainWindowFnForA
   console.log(`[DEBUG] ACK timeout for message ${messageId} — queuing + pushing`);
 
   // Queue for next reconnect
-  queueMessage(deviceId, message.type || "text", message);
+  queueMessage(deviceId, message.type || "text", message, entry.filePath, entry.messageType);
 
   // Send FCM push notification
   const { sendPushNotification } = require("./firebase");
@@ -436,15 +448,31 @@ function startServers(options: { getMainWindow: GetMainWindowFn }) {
                   "queued messages after key exchange",
                 );
                 queuedMessages.forEach((msg) => {
-                  sendEncrypted(clientInfo, msg.data);
-                  // Track ACK if messageId is present
-                  if (msg.data?.messageId) {
-                    trackPendingAck(
-                      msg.data.messageId,
-                      msg.data,
-                      clientInfo.deviceId!,
+                  if (msg.filePath) {
+                    // File retransfer — use chunked WS transfer instead of
+                    // sending the URL reference (mobile can't reach the URL)
+                    const fileName = path.basename(msg.filePath);
+                    console.log("[DEBUG] Retransferring queued file:", fileName);
+                    sendFileEncrypted(
+                      clientInfo,
+                      msg.filePath,
+                      fileName,
+                      msg.messageType || "file",
+                      sendEncrypted,
                       getMainWindow,
+                      msg.data?.messageId,
                     );
+                  } else {
+                    sendEncrypted(clientInfo, msg.data);
+                    // Track ACK if messageId is present
+                    if (msg.data?.messageId) {
+                      trackPendingAck(
+                        msg.data.messageId,
+                        msg.data,
+                        clientInfo.deviceId!,
+                        getMainWindow,
+                      );
+                    }
                   }
                 });
               }
