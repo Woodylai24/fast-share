@@ -43,9 +43,8 @@ export function PairingPanel({
   const deviceEntries = Object.entries(pairedDevices);
 
   return (
-    <>
-      <div className="pairing-backdrop" onClick={onClose} />
-      <div className="pairing-panel">
+    <div className="pairing-backdrop" onClick={onClose}>
+      <div className="pairing-panel" onClick={(e) => e.stopPropagation()}>
         <div className="pairing-header">
           <h2>Pair New Device</h2>
           <button className="pairing-close" onClick={onClose} title="Close">
@@ -130,6 +129,6 @@ export function PairingPanel({
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
