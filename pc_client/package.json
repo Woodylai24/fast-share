@@ -77,7 +77,7 @@
         }
       ],
       "icon": "public/icon.ico",
-      "signAndEditExecutable": false
+      "signAndEditExecutable": true
     },
     "nsis": {
       "oneClick": false,
