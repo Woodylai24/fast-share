@@ -64,6 +64,7 @@
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
+      "public/icon.ico",
       "package.json"
     ],
     "win": {
