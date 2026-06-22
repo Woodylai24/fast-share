@@ -1,7 +1,7 @@
 {
   "name": "pc-client",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "npm run build:electron && concurrently -k \"npm run dev:vite\" \"npm run electron:start\"",
@@ -64,6 +64,7 @@
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
+      "public/icon.ico",
       "package.json"
     ],
     "win": {
@@ -76,7 +77,7 @@
         }
       ],
       "icon": "public/icon.ico",
-      "signAndEditExecutable": false
+      "signAndEditExecutable": true
     },
     "nsis": {
       "oneClick": false,
