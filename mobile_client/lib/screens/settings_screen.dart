@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:fast_share_mobile/ai_service.dart';
 import 'package:fast_share_mobile/services/settings_service.dart';
 import 'package:fast_share_mobile/services/theme_notifier.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 /// Full settings page with General, Appearance, Connection, Notifications,
 /// AI, and About sections.
@@ -37,6 +38,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<AIModel> _models = [];
   bool _loadingModels = false;
   String? _fetchError;
+  String _appVersion = '';
 
   @override
   void initState() {
@@ -63,6 +65,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       AISettingsService.getModel(),
     ]);
 
+    final packageInfo = await PackageInfo.fromPlatform();
+
     setState(() {
       _startupOnBoot = results[0] as bool;
       _autoConnectOnLaunch = results[1] as bool;
@@ -77,6 +81,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
       _selectedModel = results[6] as String;
 
+      _appVersion = '${packageInfo.version}+${packageInfo.buildNumber}';
       _settingsLoaded = true;
     });
 
@@ -536,7 +541,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ListTile(
                   leading: const Icon(Icons.new_releases_outlined),
                   title: const Text('Version'),
-                  subtitle: const Text('1.0.0'),
+                  subtitle: Text(_appVersion),
                 ),
                 const SizedBox(height: 24),
               ],

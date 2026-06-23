@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 contextBridge.exposeInMainWorld("electronAPI", {
   getConnectionInfo: () => ipcRenderer.invoke("get-connection-info"),
+  getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   sendText: (text: string, messageId: string) => ipcRenderer.send("send-text", text, messageId),
   sendPong: () => ipcRenderer.send("send-pong"),
   disconnectClient: () => ipcRenderer.send("disconnect-client"),

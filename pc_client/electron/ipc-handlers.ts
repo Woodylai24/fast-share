@@ -117,6 +117,10 @@ function registerIpcHandlers(
     };
   });
 
+  ipcMainInstance.handle("get-app-version", () => {
+    return app.getVersion();
+  });
+
   ipcMainInstance.handle('get-last-connected', () => {
     return {
       device: settingsStore.get('lastConnectedDevice', ''),

@@ -14,6 +14,7 @@ export interface IElectronAPI {
     wsPort: number;
     httpPort: number;
   }>;
+  getAppVersion: () => Promise<string>;
   sendText: (text: string, messageId: string) => void;
   sendPong: () => void;
   disconnectClient: () => void;

@@ -43,7 +43,7 @@ export function TitleBar({ onSettingsClick, onQrClick, onUploadClick }: TitleBar
             title="Upload File"
           >
             <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">
-              <path d="M10 2a1 1 0 0 1 1 1v8.586l2.293-2.293a1 1 0 1 1 1.414 1.414l-4 4a1 1 0 0 1-1.414 0l-4-4a1 1 0 0 1 1.414-1.414L9 11.586V3a1 1 0 0 1 1-1zM4 15a1 1 0 0 1 1 1v1h10v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1z"/>
+              <path d="M10 15a1 1 0 0 0-1-1V5.414L6.707 7.707a1 1 0 0 1-1.414-1.414l4-4a1 1 0 0 1 1.414 0l4 4a1 1 0 0 1-1.414 1.414L11 5.414V14a1 1 0 0 1-1 1zM4 15a1 1 0 0 1 1 1v1h10v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1z"/>
             </svg>
           </button>
         )}

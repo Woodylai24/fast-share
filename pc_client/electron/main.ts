@@ -47,9 +47,9 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   const { ipcMain } = require("electron");
-  startServers({ getMainWindow });
+  await startServers({ getMainWindow });
 
   const { restartClipboardSync } = require("./clipboard-sync") as typeof import("./clipboard-sync");
   const { sendEncryptedToClients } = require("./server") as typeof import("./server");

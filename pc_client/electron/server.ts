@@ -5,6 +5,7 @@ import ip from "ip";
 import express from "express";
 import cors from "cors";
 import http from "http";
+import net from "net";
 import { WebSocketServer, WebSocket } from "ws";
 import { CryptoManager, isUnencryptedType } from "./crypto";
 import { processFileMessage, cleanupFileReassembly, FILE_CHUNK_SIZE, sendFileEncrypted } from "./file-transfer";
@@ -13,8 +14,8 @@ import settingsStore from "./settings-store";
 import { pairDevice, updateDeviceLastSeen, removePairedDevice } from "./settings-store";
 
 // --- Configuration ---
-const WS_PORT = 8080;
-const HTTP_PORT = 8081;
+let WS_PORT = 8080;
+let HTTP_PORT = 8081;
 const KEY_EXCHANGE_TIMEOUT_MS = 5000; // 5 seconds
 const PING_INTERVAL = 30_000; // 30 seconds
 const PONG_TIMEOUT = 10_000; // 10 seconds to respond
@@ -86,6 +87,40 @@ function getLocalIps() {
   });
 
   return addresses;
+}
+
+function findAvailablePort(startPort: number, maxAttempts = 10): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let port = startPort;
+    let attempts = 0;
+
+    const tryPort = () => {
+      const tester = net.createServer();
+      tester.once("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EADDRINUSE") {
+          attempts++;
+          if (attempts >= maxAttempts) {
+            reject(
+              new Error(
+                `No available port found after ${maxAttempts} attempts (starting from ${startPort})`,
+              ),
+            );
+          } else {
+            port++;
+            tryPort();
+          }
+        } else {
+          reject(err);
+        }
+      });
+      tester.once("listening", () => {
+        tester.close(() => resolve(port));
+      });
+      tester.listen(port);
+    };
+
+    tryPort();
+  });
 }
 
 // --- Message Queuing Functions ---
@@ -271,8 +306,11 @@ function stopHeartbeat(client: ClientInfo) {
 }
 
 // --- Server Setup ---
-function startServers(options: { getMainWindow: GetMainWindowFn }) {
+async function startServers(options: { getMainWindow: GetMainWindowFn }) {
   const { getMainWindow } = options;
+  WS_PORT = await findAvailablePort(8080);
+  HTTP_PORT = await findAvailablePort(WS_PORT + 1);
+  console.log(`[DEBUG] Using WebSocket port: ${WS_PORT}, HTTP port: ${HTTP_PORT}`);
   const allIps = getLocalIps();
   console.log("=== SERVER STARTUP DIAGNOSTICS ===");
   console.log("[DEBUG] Available network interfaces:", allIps);

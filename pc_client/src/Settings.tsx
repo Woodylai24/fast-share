@@ -46,6 +46,12 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
   const [loadingModels, setLoadingModels] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [appVersion, setAppVersion] = useState("...");
+
+  // Fetch app version on mount
+  useEffect(() => {
+    window.electronAPI.getAppVersion().then(setAppVersion);
+  }, []);
 
   // Load all settings on open
   useEffect(() => {
@@ -473,7 +479,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
             </button>
             <div className="settings-row">
               <span className="settings-row-label">Version</span>
-              <span className="settings-version">1.0.0</span>
+              <span className="settings-version">{appVersion}</span>
             </div>
           </section>
         </div>
