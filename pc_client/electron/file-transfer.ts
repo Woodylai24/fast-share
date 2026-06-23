@@ -277,12 +277,16 @@ function sendFileEncrypted(client: any, filePath: string, fileName: string, mess
     });
 
     // Send file-start
-    sendEncrypted(client, {
+    const fileStartMsg: Record<string, unknown> = {
       type: "file-start",
       filename: fileName,
       fileSize,
       mimeType,
-    });
+    };
+    if (messageId) {
+      fileStartMsg.messageId = messageId;
+    }
+    sendEncrypted(client, fileStartMsg);
 
     // Send file-chunks with progress
     let offset = 0;

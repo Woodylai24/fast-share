@@ -19,7 +19,8 @@ let HTTP_PORT = 8081;
 const KEY_EXCHANGE_TIMEOUT_MS = 5000; // 5 seconds
 const PING_INTERVAL = 30_000; // 30 seconds
 const PONG_TIMEOUT = 10_000; // 10 seconds to respond
-const ACK_TIMEOUT_MS = 15_000; // 15 seconds to wait for message ACK
+const ACK_TIMEOUT_MS = 15_000; // 15 seconds for text messages
+export const FILE_ACK_TIMEOUT_MS = 120_000; // 120 seconds for file transfers
 
 // --- Client Tracking ---
 interface ClientInfo {
@@ -175,13 +176,13 @@ function generateMessageId(): string {
 type GetMainWindowFnForAck = () => { webContents: { send: (channel: string, ...args: unknown[]) => void } } | null;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function trackPendingAck(messageId: string, message: any, deviceId: string, getMainWindow?: GetMainWindowFnForAck, filePath?: string, messageType?: string) {
+function trackPendingAck(messageId: string, message: any, deviceId: string, getMainWindow?: GetMainWindowFnForAck, filePath?: string, messageType?: string, timeoutMs?: number) {
   // Clear any existing entry for this messageId (shouldn't happen normally)
   clearPendingAck(messageId);
 
   const timer = setTimeout(() => {
     handleAckTimeout(messageId, getMainWindow);
-  }, ACK_TIMEOUT_MS);
+  }, timeoutMs ?? ACK_TIMEOUT_MS);
 
   pendingAcks.set(messageId, { timer, message, deviceId, filePath, messageType });
 }

@@ -16,21 +16,31 @@ import 'package:fast_share_mobile/services/settings_service.dart';
 import 'package:fast_share_mobile/crypto_service.dart';
 import 'package:fast_share_mobile/share_handler.dart';
 
-/// Incoming file transfer state for reassembly
+/// Incoming file transfer state for reassembly.
+///
+/// Chunks are streamed to a temp file on disk instead of being accumulated
+/// in memory. Accumulating 70MB of chunks in a `List<Uint8List>` (and then
+/// concatenating them into a single `List<int>`) freezes the phone on large
+/// transfers; writing incrementally to disk keeps memory usage flat.
 class _IncomingFileTransfer {
   final String filename;
   final int fileSize;
   final String mimeType;
-  final List<Uint8List> chunks = [];
   int receivedBytes = 0;
   Timer? _timer;
   String? messageId; // ID of the placeholder Message in the message list
+  File? _tempFile;
+  IOSink? _sink;
 
   _IncomingFileTransfer({
     required this.filename,
     required this.fileSize,
     required this.mimeType,
   }) {
+    _tempFile = File(
+      '${Directory.systemTemp.path}/fastshare_${DateTime.now().millisecondsSinceEpoch}.tmp',
+    );
+    _sink = _tempFile!.openWrite();
     _resetTimer();
   }
 
@@ -45,9 +55,30 @@ class _IncomingFileTransfer {
     _timer?.cancel();
   }
 
+  /// Append a chunk to the temp file on disk and advance the received byte count.
+  void appendChunk(Uint8List data) {
+    _sink?.add(data);
+    receivedBytes += data.length;
+  }
+
+  /// Flush and close the write sink, returning the path of the assembled file.
+  Future<String> finalize() async {
+    await _sink?.flush();
+    await _sink?.close();
+    _sink = null;
+    return _tempFile!.path;
+  }
+
   void _cleanup() {
     _cancelTimer();
-    chunks.clear();
+    _sink?.close();
+    // The sink close above is async; the file may still be flushing, so guard
+    // the unlink against an in-flight write.
+    try {
+      _tempFile?.deleteSync();
+    } catch (_) {}
+    _sink = null;
+    _tempFile = null;
   }
 }
 
@@ -833,8 +864,7 @@ class ChatNotifier extends ChangeNotifier {
       return;
     }
     final chunkData = base64Decode(data['data'] as String);
-    _incomingFile!.chunks.add(chunkData);
-    _incomingFile!.receivedBytes += chunkData.length;
+    _incomingFile!.appendChunk(chunkData);
     _incomingFile!._resetTimer();
 
     // Throttled progress update: notify only every 5% change
@@ -868,16 +898,42 @@ class ChatNotifier extends ChangeNotifier {
     _incomingFile = null;
     transfer._cancelTimer();
 
-    final assembled = <int>[];
-    for (final chunk in transfer.chunks) {
-      assembled.addAll(chunk);
+    // Read the assembled file back from the on-disk temp file instead of
+    // concatenating every chunk in memory.
+    String? tempPath;
+    Uint8List fileBytes;
+    try {
+      tempPath = await transfer.finalize();
+      fileBytes = await File(tempPath).readAsBytes();
+    } catch (e) {
+      debugPrint('[DEBUG] Failed to finalize temp file: $e');
+      if (tempPath != null) {
+        try {
+          await File(tempPath).delete();
+        } catch (_) {}
+      }
+      final msgId = transfer.messageId;
+      if (msgId != null) {
+        _updateMessageById(
+          msgId,
+          _messages.firstWhere((m) => m.id == msgId).copyWith(
+            transferState: TransferState.failed,
+          ),
+        );
+        notifyListeners();
+      }
+      return;
     }
 
-    final checksum = await CryptoService.sha256(assembled);
+    final checksum = await CryptoService.sha256(fileBytes);
     if (checksum != data['checksum']) {
       debugPrint(
         '[DEBUG] File checksum mismatch: expected ${data['checksum']}, got $checksum',
       );
+      // Clean up the temp file before bailing out.
+      try {
+        await File(tempPath).delete();
+      } catch (_) {}
       // Mark the placeholder as failed
       final msgId = transfer.messageId;
       if (msgId != null) {
@@ -902,7 +958,7 @@ class ChatNotifier extends ChangeNotifier {
     try {
       final fastShareDir = await FileStorage.getFastShareDir();
       final localFile = File('${fastShareDir.path}/$filename');
-      await localFile.writeAsBytes(assembled);
+      await localFile.writeAsBytes(fileBytes);
       fileUrl = 'file://${localFile.path}';
       debugPrint('[DEBUG] File saved locally: ${localFile.path}');
       // Scan image files so they appear in Gallery
@@ -913,6 +969,12 @@ class ChatNotifier extends ChangeNotifier {
       debugPrint('[DEBUG] Failed to save file locally: $e');
       fileUrl = 'http://$ip:$httpPort/files/${Uri.encodeComponent(filename)}';
     }
+
+    // The assembled bytes are now persisted (or a fallback URL is set), so the
+    // temp file is no longer needed.
+    try {
+      await File(tempPath).delete();
+    } catch (_) {}
 
     if (!_isDisconnected) {
       // Update the placeholder message to complete with the actual URL

@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { WebSocket } from "ws";
-import { sendEncrypted, broadcastToClients, connectedClients, getLocalIp, getLocalIps, WS_PORT, HTTP_PORT, wss, queueMessage, stopHeartbeat, generateMessageId, trackPendingAck } from "./server";
+import { sendEncrypted, broadcastToClients, connectedClients, getLocalIp, getLocalIps, WS_PORT, HTTP_PORT, wss, queueMessage, stopHeartbeat, generateMessageId, trackPendingAck, FILE_ACK_TIMEOUT_MS } from "./server";
 import { sendFileEncrypted } from "./file-transfer";
 import { sendPushNotification } from "./firebase";
 import { aiSettingsStore } from "./ai-summarize";
@@ -264,7 +264,7 @@ function registerIpcHandlers(
         sentViaWs = true;
         // Track ACK — mobile confirms receipt after reassembling the file
         if (messageId && client.deviceId) {
-          trackPendingAck(messageId, { type: messageType, filename: fileName, url: fileUrl, messageId }, client.deviceId, undefined, destPath, messageType);
+          trackPendingAck(messageId, { type: messageType, filename: fileName, url: fileUrl, messageId }, client.deviceId, undefined, destPath, messageType, FILE_ACK_TIMEOUT_MS);
         }
       }
     });
