@@ -1015,6 +1015,11 @@ class ChatNotifier extends ChangeNotifier {
       final uploadUrlCompleter = Completer<String>();
       _pendingUploads[messageId] = uploadUrlCompleter;
 
+      // Track ACK BEFORE upload — PC sends ACK immediately after decryption,
+      // which can arrive while the upload is still in progress. If we track
+      // after the upload, the ACK is already missed and the 15s timer fires.
+      _trackPendingAck(messageId);
+
       final uploadUrl = await uploadUrlCompleter.future.timeout(
         const Duration(seconds: 30),
         onTimeout: () => throw TimeoutException('PC did not respond to upload request'),
@@ -1039,7 +1044,6 @@ class ChatNotifier extends ChangeNotifier {
           url: 'file://$filePath',
           deliveryStatus: 'sent',
         ));
-      _trackPendingAck(messageId);
       _lastNotifiedProgress = -1;
       notifyListeners();
       _saveMessages();
