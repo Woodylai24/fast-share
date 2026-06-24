@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
@@ -15,9 +16,45 @@ import 'package:fast_share_mobile/services/notifications.dart';
 import 'package:fast_share_mobile/services/settings_service.dart';
 import 'package:fast_share_mobile/crypto_service.dart';
 import 'package:fast_share_mobile/share_handler.dart';
+import 'package:cryptography/cryptography.dart';
 
 /// Manages WebSocket connection, E2EE, messages, file transfer, and clipboard sync.
 /// Used by ConnectedScreen via ListenableBuilder.
+
+// ─── Isolate functions for background crypto (prevents UI freeze) ─────
+
+/// Decrypt a file in a background isolate using a one-time AES-256-GCM key.
+/// Must be top-level for compute() to access it.
+Future<Uint8List> _decryptFileInIsolate(Map<String, List<int>> args) async {
+  final aesGcm = AesGcm.with256bits();
+  final secretBox = SecretBox(
+    args['encrypted']!,
+    nonce: args['nonce']!,
+    mac: Mac(args['mac']!),
+  );
+  final decrypted = await aesGcm.decrypt(
+    secretBox,
+    secretKey: SecretKey(args['key']!),
+  );
+  return Uint8List.fromList(decrypted);
+}
+
+/// Encrypt a file in a background isolate using a one-time AES-256-GCM key.
+/// Key and nonce are generated in the caller and passed in so they can be
+/// reused for the WS metadata message. Returns encrypted bytes + GCM mac.
+Future<Map<String, Uint8List>> _encryptFileInIsolate(Map<String, List<int>> args) async {
+  final aesGcm = AesGcm.with256bits();
+  final secretBox = await aesGcm.encrypt(
+    args['data']!,
+    secretKey: SecretKey(args['key']!),
+    nonce: args['nonce']!,
+  );
+  return {
+    'encrypted': Uint8List.fromList(secretBox.cipherText),
+    'mac': Uint8List.fromList(secretBox.mac.bytes),
+  };
+}
+
 class ChatNotifier extends ChangeNotifier {
   final String ip;
   final int port;
@@ -809,14 +846,13 @@ class ChatNotifier extends ChangeNotifier {
         }
       }
 
-      // Decrypt
-      final decrypted = await _crypto.decryptFile(
-        encryptedBytes,
-        base64Decode(keyBase64),
-        base64Decode(nonceBase64),
-        base64Decode(tagBase64),
-      );
-      if (decrypted == null) throw Exception('Decryption failed');
+      // Decrypt in background isolate (prevents UI freeze on large files)
+      final decrypted = await compute(_decryptFileInIsolate, {
+        'encrypted': encryptedBytes,
+        'key': base64Decode(keyBase64),
+        'nonce': base64Decode(nonceBase64),
+        'mac': base64Decode(tagBase64),
+      });
 
       // Save to FastShare dir
       final fastShareDir = await FileStorage.getFastShareDir();
@@ -949,8 +985,14 @@ class ChatNotifier extends ChangeNotifier {
         ));
       notifyListeners();
 
-      // Encrypt file with one-time key
-      final enc = await _crypto.encryptFile(fileBytes);
+      // Encrypt file with one-time key in background isolate
+      final key = List<int>.generate(32, (_) => Random.secure().nextInt(256));
+      final nonce = List<int>.generate(12, (_) => Random.secure().nextInt(256));
+      final encResult = await compute(_encryptFileInIsolate, {
+        'data': fileBytes,
+        'key': key,
+        'nonce': nonce,
+      });
       final messageId = placeholder.id;
       final mimeType = _getMimeType(filename);
 
@@ -960,9 +1002,9 @@ class ChatNotifier extends ChangeNotifier {
         'filename': filename,
         'fileSize': fileBytes.length,
         'mimeType': mimeType,
-        'key': base64Encode(enc.key),
-        'nonce': base64Encode(enc.nonce),
-        'tag': base64Encode(enc.mac),
+        'key': base64Encode(key),
+        'nonce': base64Encode(nonce),
+        'tag': base64Encode(encResult['mac']!),
         'messageId': messageId,
       });
 
@@ -977,8 +1019,8 @@ class ChatNotifier extends ChangeNotifier {
 
       // Upload encrypted blob via HTTP
       final uploadRequest = http.StreamedRequest('POST', Uri.parse(uploadUrl));
-      uploadRequest.contentLength = enc.encrypted.length;
-      uploadRequest.sink.add(enc.encrypted);
+      uploadRequest.contentLength = encResult['encrypted']!.length;
+      uploadRequest.sink.add(encResult['encrypted']!);
       uploadRequest.sink.close();
 
       final uploadResponse = await uploadRequest.send();
