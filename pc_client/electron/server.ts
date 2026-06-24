@@ -751,11 +751,14 @@ async function startServers(options: { getMainWindow: GetMainWindowFn }) {
             // Notify renderer
             getMainWindow()?.webContents.send("file-received-start", { filename, fileSize, mimeType });
 
-            // Tell mobile to start uploading
+            // Tell mobile to start uploading — send just the token, not the
+            // full URL. Mobile constructs the URL from the IP it connected to
+            // (avoids getLocalIp() returning a wrong virtual adapter IP).
             sendEncrypted(clientInfo, {
               type: "file-upload-ready",
               requestId: messageId,
-              uploadUrl: `http://${getLocalIp()}:${HTTP_PORT}/encrypted-upload/${uploadToken}`,
+              uploadToken,
+              httpPort: HTTP_PORT,
             });
             console.log("[DEBUG] File upload request from mobile:", filename);
             return;

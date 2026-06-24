@@ -739,7 +739,10 @@ class ChatNotifier extends ChangeNotifier {
 
       case 'file-upload-ready':
         final requestId = data['requestId'] as String;
-        final uploadUrl = data['uploadUrl'] as String;
+        final uploadToken = data['uploadToken'] as String;
+        // Construct URL from the IP we're connected to — the PC's getLocalIp()
+        // may return a wrong virtual adapter (e.g., WSL2, VPN) that's unreachable.
+        final uploadUrl = 'http://$ip:${data['httpPort'] ?? httpPort}/encrypted-upload/$uploadToken';
         final completer = _pendingUploads.remove(requestId);
         completer?.complete(uploadUrl);
         break;
