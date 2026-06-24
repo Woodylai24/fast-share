@@ -378,7 +378,7 @@ async function startServers(options: { getMainWindow: GetMainWindowFn }) {
   // Endpoint to serve files to Mobile (legacy HTTP fallback)
   expressApp.use("/files", express.static(sharedDir));
 
-  httpServer = expressApp.listen(HTTP_PORT, "127.0.0.1", () => {
+  httpServer = expressApp.listen(HTTP_PORT, "0.0.0.0", () => {
     console.log(
       `[DEBUG] HTTP Server running on http://${getLocalIp()}:${HTTP_PORT}`,
     );
