@@ -138,6 +138,38 @@ export class CryptoManager {
   }
 
   /**
+   * Encrypt raw bytes with a one-time random AES-256-GCM key.
+   * Returns the encrypted buffer, key, and nonce for transmission.
+   */
+  static encryptFile(data: Buffer): {
+    encrypted: Buffer;
+    key: Buffer;
+    nonce: Buffer;
+    tag: Buffer;
+  } {
+    const key = crypto.randomBytes(32);
+    const nonce = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", key, nonce);
+    const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return { encrypted, key, nonce, tag };
+  }
+
+  /**
+   * Decrypt raw bytes encrypted with encryptFile.
+   */
+  static decryptFile(encrypted: Buffer, key: Buffer, nonce: Buffer, tag: Buffer): Buffer | null {
+    try {
+      const decipher = crypto.createDecipheriv("aes-256-gcm", key, nonce);
+      decipher.setAuthTag(tag);
+      return Buffer.concat([decipher.update(encrypted), decipher.final()]);
+    } catch (error) {
+      console.error("[Crypto] File decryption failed:", error);
+      return null;
+    }
+  }
+
+  /**
    * Compute SHA-256 checksum of a buffer (for file chunks).
    */
   static sha256(data: Buffer): string {

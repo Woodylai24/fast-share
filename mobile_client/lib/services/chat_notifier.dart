@@ -16,72 +16,6 @@ import 'package:fast_share_mobile/services/settings_service.dart';
 import 'package:fast_share_mobile/crypto_service.dart';
 import 'package:fast_share_mobile/share_handler.dart';
 
-/// Incoming file transfer state for reassembly.
-///
-/// Chunks are streamed to a temp file on disk instead of being accumulated
-/// in memory. Accumulating 70MB of chunks in a `List<Uint8List>` (and then
-/// concatenating them into a single `List<int>`) freezes the phone on large
-/// transfers; writing incrementally to disk keeps memory usage flat.
-class _IncomingFileTransfer {
-  final String filename;
-  final int fileSize;
-  final String mimeType;
-  int receivedBytes = 0;
-  Timer? _timer;
-  String? messageId; // ID of the placeholder Message in the message list
-  File? _tempFile;
-  IOSink? _sink;
-
-  _IncomingFileTransfer({
-    required this.filename,
-    required this.fileSize,
-    required this.mimeType,
-  }) {
-    _tempFile = File(
-      '${Directory.systemTemp.path}/fastshare_${DateTime.now().millisecondsSinceEpoch}.tmp',
-    );
-    _sink = _tempFile!.openWrite();
-    _resetTimer();
-  }
-
-  void _resetTimer() {
-    _timer?.cancel();
-    _timer = Timer(const Duration(seconds: 30), () {
-      debugPrint('[DEBUG] File chunk reassembly timeout for $filename');
-    });
-  }
-
-  void _cancelTimer() {
-    _timer?.cancel();
-  }
-
-  /// Append a chunk to the temp file on disk and advance the received byte count.
-  void appendChunk(Uint8List data) {
-    _sink?.add(data);
-    receivedBytes += data.length;
-  }
-
-  /// Flush and close the write sink, returning the path of the assembled file.
-  Future<String> finalize() async {
-    await _sink?.flush();
-    await _sink?.close();
-    _sink = null;
-    return _tempFile!.path;
-  }
-
-  void _cleanup() {
-    _cancelTimer();
-    _sink?.close();
-    // The sink close above is async; the file may still be flushing, so guard
-    // the unlink against an in-flight write.
-    try {
-      _tempFile?.deleteSync();
-    } catch (_) {}
-    _sink = null;
-    _tempFile = null;
-  }
-}
-
 /// Manages WebSocket connection, E2EE, messages, file transfer, and clipboard sync.
 /// Used by ConnectedScreen via ListenableBuilder.
 class ChatNotifier extends ChangeNotifier {
@@ -144,9 +78,6 @@ class ChatNotifier extends ChangeNotifier {
   bool _keyExchangeComplete = false;
   bool get keyExchangeComplete => _keyExchangeComplete;
   Timer? _keyExchangeTimeout;
-
-  // File transfer
-  _IncomingFileTransfer? _incomingFile;
 
   // Progress throttle — last notified progress percentage (0-100)
   int _lastNotifiedProgress = -1;
@@ -769,12 +700,11 @@ class ChatNotifier extends ChangeNotifier {
         _handleFileStart(data);
         break;
 
-      case 'file-chunk':
-        _handleFileChunk(data);
-        break;
-
-      case 'file-end':
-        _handleFileEnd(data);
+      case 'file-upload-ready':
+        final requestId = data['requestId'] as String;
+        final uploadUrl = data['uploadUrl'] as String;
+        final completer = _pendingUploads.remove(requestId);
+        completer?.complete(uploadUrl);
         break;
 
       case 'file_offer':
@@ -826,24 +756,17 @@ class ChatNotifier extends ChangeNotifier {
 
   // ─── File transfer ──────────────────────────────────────────────────
 
-  void _handleFileStart(Map<String, dynamic> data) {
-    debugPrint(
-      '[DEBUG] File transfer starting: ${data['filename']} (${data['fileSize']} bytes)',
-    );
-    _incomingFile?._cleanup();
-    _incomingFile = _IncomingFileTransfer(
-      filename: data['filename'] as String,
-      fileSize: data['fileSize'] as int,
-      mimeType: data['mimeType'] as String? ?? 'application/octet-stream',
-    );
+  Future<void> _handleFileStart(Map<String, dynamic> data) async {
+    final filename = data['filename'] as String;
+    final fileSize = data['fileSize'] as int;
+    final downloadUrl = data['downloadUrl'] as String;
+    final keyBase64 = data['key'] as String;
+    final nonceBase64 = data['nonce'] as String;
+    final tagBase64 = data['tag'] as String;
 
-    // Create a placeholder message immediately for progress UI
-    final filename = _incomingFile!.filename;
-    final isImage = RegExp(
-      r'\.(jpg|jpeg|png|gif|webp|bmp)$',
-      caseSensitive: false,
-    ).hasMatch(filename);
+    debugPrint('[DEBUG] File transfer starting: $filename ($fileSize bytes)');
 
+    final isImage = RegExp(r'\.(jpg|jpeg|png|gif|webp|bmp)$', caseSensitive: false).hasMatch(filename);
     final placeholder = Message.transferPlaceholder(
       filename: filename,
       sender: 'PC',
@@ -851,171 +774,77 @@ class ChatNotifier extends ChangeNotifier {
       transferState: TransferState.pending,
       transferProgress: 0.0,
     );
-    _incomingFile!.messageId = placeholder.id;
     _messages.add(placeholder);
     _lastNotifiedProgress = 0;
     notifyListeners();
     _scrollToBottom();
-  }
 
-  void _handleFileChunk(Map<String, dynamic> data) {
-    if (_incomingFile == null) {
-      debugPrint('[DEBUG] Received file-chunk without file-start — dropping');
-      return;
-    }
-    final chunkData = base64Decode(data['data'] as String);
-    _incomingFile!.appendChunk(chunkData);
-    _incomingFile!._resetTimer();
+    try {
+      // Update to transferring state
+      _updateMessageById(placeholder.id,
+        _messages.firstWhere((m) => m.id == placeholder.id).copyWith(
+          transferState: TransferState.transferring,
+          transferProgress: 0.0,
+        ));
+      notifyListeners();
 
-    // Throttled progress update: notify only every 5% change
-    final progress = _incomingFile!.fileSize > 0
-        ? _incomingFile!.receivedBytes / _incomingFile!.fileSize
-        : 0.0;
-    final currentPct = (progress * 100).toInt();
-    if (currentPct - _lastNotifiedProgress >= 5) {
-      _lastNotifiedProgress = currentPct;
-      final msgId = _incomingFile!.messageId;
-      if (msgId != null) {
-        final idx = _messages.indexWhere((m) => m.id == msgId);
-        if (idx >= 0) {
-          _messages[idx] = _messages[idx].copyWith(
-            transferState: TransferState.transferring,
-            transferProgress: progress,
-          );
+      // Download encrypted blob with progress tracking
+      final response = await http.Client().send(http.Request('GET', Uri.parse(downloadUrl)));
+      if (response.statusCode != 200) {
+        throw Exception('HTTP ${response.statusCode}');
+      }
+
+      final encryptedBytes = <int>[];
+      await for (final chunk in response.stream) {
+        encryptedBytes.addAll(chunk);
+        final progress = fileSize > 0 ? encryptedBytes.length / fileSize : 0.0;
+        final currentPct = (progress * 100).toInt();
+        if (currentPct - _lastNotifiedProgress >= 5 || progress >= 1.0) {
+          _lastNotifiedProgress = currentPct;
+          _updateMessageById(placeholder.id,
+            _messages.firstWhere((m) => m.id == placeholder.id).copyWith(
+              transferProgress: progress,
+            ));
           notifyListeners();
         }
       }
-    }
-  }
 
-  Future<void> _handleFileEnd(Map<String, dynamic> data) async {
-    if (_incomingFile == null) {
-      debugPrint('[DEBUG] Received file-end without file-start — ignoring');
-      return;
-    }
-
-    final transfer = _incomingFile!;
-    _incomingFile = null;
-    transfer._cancelTimer();
-
-    // Read the assembled file back from the on-disk temp file instead of
-    // concatenating every chunk in memory.
-    String? tempPath;
-    Uint8List fileBytes;
-    try {
-      tempPath = await transfer.finalize();
-      fileBytes = await File(tempPath).readAsBytes();
-    } catch (e) {
-      debugPrint('[DEBUG] Failed to finalize temp file: $e');
-      if (tempPath != null) {
-        try {
-          await File(tempPath).delete();
-        } catch (_) {}
-      }
-      final msgId = transfer.messageId;
-      if (msgId != null) {
-        _updateMessageById(
-          msgId,
-          _messages.firstWhere((m) => m.id == msgId).copyWith(
-            transferState: TransferState.failed,
-          ),
-        );
-        notifyListeners();
-      }
-      return;
-    }
-
-    final checksum = await CryptoService.sha256(fileBytes);
-    if (checksum != data['checksum']) {
-      debugPrint(
-        '[DEBUG] File checksum mismatch: expected ${data['checksum']}, got $checksum',
+      // Decrypt
+      final decrypted = await _crypto.decryptFile(
+        encryptedBytes,
+        base64Decode(keyBase64),
+        base64Decode(nonceBase64),
+        base64Decode(tagBase64),
       );
-      // Clean up the temp file before bailing out.
-      try {
-        await File(tempPath).delete();
-      } catch (_) {}
-      // Mark the placeholder as failed
-      final msgId = transfer.messageId;
-      if (msgId != null) {
-        _updateMessageById(
-          msgId,
-          _messages.firstWhere((m) => m.id == msgId).copyWith(
-            transferState: TransferState.failed,
-          ),
-        );
-        notifyListeners();
-      }
-      return;
-    }
+      if (decrypted == null) throw Exception('Decryption failed');
 
-    final filename = transfer.filename;
-    final isImage = RegExp(
-      r'\.(jpg|jpeg|png|gif|webp|bmp)$',
-      caseSensitive: false,
-    ).hasMatch(filename);
-
-    String fileUrl;
-    try {
+      // Save to FastShare dir
       final fastShareDir = await FileStorage.getFastShareDir();
       final localFile = File('${fastShareDir.path}/$filename');
-      await localFile.writeAsBytes(fileBytes);
-      fileUrl = 'file://${localFile.path}';
-      debugPrint('[DEBUG] File saved locally: ${localFile.path}');
-      // Scan image files so they appear in Gallery
+      await localFile.writeAsBytes(decrypted);
       if (isImage) {
         await FileStorage.scanFile(localFile.path);
       }
-    } catch (e) {
-      debugPrint('[DEBUG] Failed to save file locally: $e');
-      fileUrl = 'http://$ip:$httpPort/files/${Uri.encodeComponent(filename)}';
-    }
 
-    // The assembled bytes are now persisted (or a fallback URL is set), so the
-    // temp file is no longer needed.
-    try {
-      await File(tempPath).delete();
-    } catch (_) {}
-
-    if (!_isDisconnected) {
-      // Update the placeholder message to complete with the actual URL
-      final msgId = transfer.messageId;
-      if (msgId != null) {
-        final updated = _updateMessageById(
-          msgId,
-          _messages.firstWhere((m) => m.id == msgId).copyWith(
-            transferState: TransferState.complete,
-            transferProgress: 1.0,
-            url: fileUrl,
-          ),
-        );
-        if (!updated) {
-          // Fallback: add a new message if placeholder was removed
-          if (isImage) {
-            _messages.add(Message.image(filename: filename, url: fileUrl, sender: 'PC'));
-          } else {
-            _messages.add(Message.file(filename: filename, url: fileUrl, sender: 'PC'));
-          }
-        }
-      } else {
-        // No placeholder — add a new message (legacy path)
-        if (isImage) {
-          _messages.add(Message.image(filename: filename, url: fileUrl, sender: 'PC'));
-        } else {
-          _messages.add(Message.file(filename: filename, url: fileUrl, sender: 'PC'));
-        }
-      }
+      // Update placeholder to complete
+      _updateMessageById(placeholder.id,
+        _messages.firstWhere((m) => m.id == placeholder.id).copyWith(
+          transferState: TransferState.complete,
+          transferProgress: 1.0,
+          url: 'file://${localFile.path}',
+        ));
       notifyListeners();
       _saveMessages();
       _scrollToBottom();
-
-      if (!_isInForeground) {
-        showLocalNotification("File Received", filename, payload: fileUrl);
-      }
+      debugPrint('[DEBUG] File received and decrypted: $filename');
+    } catch (e) {
+      debugPrint('[DEBUG] File download/decrypt failed: $e');
+      _updateMessageById(placeholder.id,
+        _messages.firstWhere((m) => m.id == placeholder.id).copyWith(
+          transferState: TransferState.failed,
+        ));
+      notifyListeners();
     }
-
-    debugPrint(
-      '[DEBUG] File transfer complete: $filename (${transfer.receivedBytes} bytes)',
-    );
   }
 
   // ─── Sending ─────────────────────────────────────────────────────────
@@ -1074,18 +903,15 @@ class ChatNotifier extends ChangeNotifier {
   // Each entry stores the path + filename to flush after reconnect.
   final List<({String path, String name})> _pendingFiles = [];
 
+  // Pending file uploads — maps messageId → Completer for upload URL
+  final Map<String, Completer<String>> _pendingUploads = {};
+
   Future<void> sendFile(String filePath, String filename) async {
     if (_isDisconnected || !_keyExchangeComplete || !_crypto.isReady) {
-      // Can't send right now — likely because the file picker closed the WS.
-      // Queue the file and send after reconnect.
       debugPrint('[DEBUG] sendFile: not connected, queuing file for after reconnect');
       _pendingFiles.add((path: filePath, name: filename));
 
-      // Show placeholder immediately so the user sees their file
-      final isImage = RegExp(
-        r'\.(jpg|jpeg|png|gif|webp|bmp)$',
-        caseSensitive: false,
-      ).hasMatch(filename);
+      final isImage = RegExp(r'\.(jpg|jpeg|png|gif|webp|bmp)$', caseSensitive: false).hasMatch(filename);
       final placeholder = Message.transferPlaceholder(
         filename: filename,
         sender: 'Me',
@@ -1099,13 +925,7 @@ class ChatNotifier extends ChangeNotifier {
       return;
     }
 
-    // Determine message type (image vs file)
-    final isImage = RegExp(
-      r'\.(jpg|jpeg|png|gif|webp|bmp)$',
-      caseSensitive: false,
-    ).hasMatch(filename);
-
-    // Create a placeholder message for the outgoing transfer
+    final isImage = RegExp(r'\.(jpg|jpeg|png|gif|webp|bmp)$', caseSensitive: false).hasMatch(filename);
     final placeholder = Message.transferPlaceholder(
       filename: filename,
       sender: 'Me',
@@ -1121,116 +941,72 @@ class ChatNotifier extends ChangeNotifier {
     try {
       final file = File(filePath);
       final fileBytes = await file.readAsBytes();
-      final fileSize = fileBytes.length;
-      final mimeType = _getMimeType(filename);
-      final checksum = await CryptoService.sha256(fileBytes);
 
-      // Update to transferring state
-      _updateMessageById(
-        placeholder.id,
-        placeholder.copyWith(
+      _updateMessageById(placeholder.id,
+        _messages.firstWhere((m) => m.id == placeholder.id).copyWith(
           transferState: TransferState.transferring,
           transferProgress: 0.0,
-        ),
-      );
+        ));
       notifyListeners();
 
+      // Encrypt file with one-time key
+      final enc = await _crypto.encryptFile(fileBytes);
+      final messageId = placeholder.id;
+      final mimeType = _getMimeType(filename);
+
+      // Send metadata via E2EE WS — PC responds with upload URL
       _sendEncrypted({
-        'type': 'file-start',
+        'type': 'file-upload-request',
         'filename': filename,
-        'fileSize': fileSize,
+        'fileSize': fileBytes.length,
         'mimeType': mimeType,
+        'key': base64Encode(enc.key),
+        'nonce': base64Encode(enc.nonce),
+        'tag': base64Encode(enc.mac),
+        'messageId': messageId,
       });
 
-      const chunkSize = 64 * 1024;
-      int offset = 0;
-      int seq = 0;
-      while (offset < fileSize) {
-        final end = (offset + chunkSize > fileSize) ? fileSize : offset + chunkSize;
-        final chunk = fileBytes.sublist(offset, end);
-        _sendEncrypted({
-          'type': 'file-chunk',
-          'seq': seq,
-          'data': base64Encode(chunk),
-        });
-        offset = end;
-        seq++;
+      // Wait for PC to respond with upload URL
+      final uploadUrlCompleter = Completer<String>();
+      _pendingUploads[messageId] = uploadUrlCompleter;
 
-        // Throttled progress update every ~5% or every 10 chunks
-        if (fileSize > 0 && (seq % 10 == 0 || offset >= fileSize)) {
-          final progress = offset / fileSize;
-          final currentPct = (progress * 100).toInt();
-          if (currentPct - _lastNotifiedProgress >= 5 || offset >= fileSize) {
-            _lastNotifiedProgress = currentPct;
-            _updateMessageById(
-              placeholder.id,
-              _messages.firstWhere((m) => m.id == placeholder.id).copyWith(
-                transferProgress: progress,
-              ),
-            );
-            notifyListeners();
-          }
-        }
+      final uploadUrl = await uploadUrlCompleter.future.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => throw TimeoutException('PC did not respond to upload request'),
+      );
+
+      // Upload encrypted blob via HTTP
+      final uploadRequest = http.StreamedRequest('POST', Uri.parse(uploadUrl));
+      uploadRequest.contentLength = enc.encrypted.length;
+      uploadRequest.sink.add(enc.encrypted);
+      uploadRequest.sink.close();
+
+      final uploadResponse = await uploadRequest.send();
+      if (uploadResponse.statusCode != 200) {
+        throw Exception('Upload failed: HTTP ${uploadResponse.statusCode}');
       }
 
-      _sendEncrypted({
-        'type': 'file-end',
-        'filename': filename,
-        'checksum': checksum,
-        'messageId': placeholder.id,
-      });
-
-      // Mark as complete — set url to local file path so it can be opened
-      _updateMessageById(
-        placeholder.id,
+      // Mark as complete
+      _updateMessageById(placeholder.id,
         _messages.firstWhere((m) => m.id == placeholder.id).copyWith(
           transferState: TransferState.complete,
           transferProgress: 1.0,
           url: 'file://$filePath',
-          deliveryStatus: 'sent', // upgrades to 'delivered' on ACK
-        ),
-      );
-      // Track ACK — PC will send message-ack after reassembling the file
-      _trackPendingAck(placeholder.id);
+          deliveryStatus: 'sent',
+        ));
+      _trackPendingAck(messageId);
       _lastNotifiedProgress = -1;
       notifyListeners();
       _saveMessages();
       _scrollToBottom();
-
-      debugPrint(
-        '[DEBUG] File sent via encrypted WS: $filename ($fileSize bytes, $seq chunks)',
-      );
+      debugPrint('[DEBUG] File uploaded: $filename (${fileBytes.length} bytes)');
     } catch (e) {
-      debugPrint(
-        '[DEBUG] Failed to send file via WS, falling back to HTTP: $e',
-      );
-      // Mark the placeholder as failed, then fall back to HTTP
-      _updateMessageById(
-        placeholder.id,
+      debugPrint('[DEBUG] Failed to send file: $e');
+      _updateMessageById(placeholder.id,
         _messages.firstWhere((m) => m.id == placeholder.id).copyWith(
           transferState: TransferState.failed,
-        ),
-      );
+        ));
       notifyListeners();
-      await _uploadFileViaHttp(filePath, filename);
-    }
-  }
-
-  Future<void> _uploadFileViaHttp(String filePath, String filename) async {
-    try {
-      var request = http.StreamedRequest(
-        'POST',
-        Uri.parse('http://$ip:$httpPort/upload'),
-      );
-      request.headers['x-filename'] = filename;
-      final file = File(filePath);
-      request.contentLength = await file.length();
-      request.sink.addStream(file.openRead());
-
-      final response = await request.send();
-      debugPrint('[DEBUG] HTTP upload response: ${response.statusCode}');
-    } catch (e) {
-      debugPrint('[DEBUG] HTTP upload failed: $e');
     }
   }
 
@@ -1343,8 +1119,6 @@ class ChatNotifier extends ChangeNotifier {
 
     _reconnectTimer?.cancel(); // Cancel any in-progress reconnect
     _watchdogTimer?.cancel();
-    _incomingFile?._cleanup();
-    _incomingFile = null;
     _keyExchangeTimeout?.cancel();
 
     // Cancel pending ACK timers and move unacked messages to pending queue.
@@ -1369,8 +1143,6 @@ class ChatNotifier extends ChangeNotifier {
     _intentionalDisconnect = true;
 
     _cancelAllPendingAcks();
-    _incomingFile?._cleanup();
-    _incomingFile = null;
     _keyExchangeTimeout?.cancel();
 
     _sendJson({'type': 'disconnect', 'reason': 'user_initiated'});
@@ -1436,7 +1208,6 @@ class ChatNotifier extends ChangeNotifier {
     _reconnectTimer?.cancel();
     _keyExchangeTimeout?.cancel();
     _watchdogTimer?.cancel();
-    _incomingFile?._cleanup();
     ShareHandler.unregisterCallbacks();
     _subscription?.cancel();
     channel.sink.close();

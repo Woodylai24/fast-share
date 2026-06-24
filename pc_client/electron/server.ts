@@ -8,7 +8,7 @@ import http from "http";
 import net from "net";
 import { WebSocketServer, WebSocket } from "ws";
 import { CryptoManager, isUnencryptedType } from "./crypto";
-import { processFileMessage, cleanupFileReassembly, FILE_CHUNK_SIZE, sendFileEncrypted } from "./file-transfer";
+import { processFileMessage } from "./file-transfer";
 import { startClipboardSync } from "./clipboard-sync";
 import settingsStore from "./settings-store";
 import { pairDevice, updateDeviceLastSeen, removePairedDevice } from "./settings-store";
@@ -54,9 +54,9 @@ interface QueuedMessage {
   data: any;
   timestamp: number;
   // For file retransfer: the local path on the PC. When present, the flush
-  // logic uses sendFileEncrypted (chunked WS transfer) instead of sending
-  // the data directly — the queued data is just a URL reference that mobile
-  // can't reach.
+  // logic encrypts the file once and serves it via an HTTP download URL
+  // instead of sending the queued data directly (mobile can't reach the
+  // stale URL reference that was queued).
   filePath?: string;
   messageType?: string;
 }
@@ -168,6 +168,11 @@ interface PendingAck {
 const pendingAcks: Map<string, PendingAck> = new Map();
 const MAX_RECENT_IDS = 200;
 const recentMessageIds: Set<string> = new Set();
+
+// Token-based encrypted file transfer registry.
+// PC→Mobile: token → { encryptedPath, cleanup() }
+// Mobile→PC: token → { key, nonce, tag, filename, fileSize, mimeType, messageId, savePath, deviceId, uploaded, decrypted }
+const fileTransferRegistry = new Map<string, Record<string, unknown>>();
 
 function generateMessageId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
@@ -330,27 +335,42 @@ async function startServers(options: { getMainWindow: GetMainWindowFn }) {
   if (!fs.existsSync(sharedDir)) fs.mkdirSync(sharedDir, { recursive: true });
   console.log("[DEBUG] Shared directory:", sharedDir);
 
-  // Endpoint to receive files from Mobile (legacy HTTP fallback)
-  expressApp.post("/upload", (req, res) => {
-    console.log("[DEBUG] HTTP upload request received from:", req.ip);
-    const filename =
-      (req.headers["x-filename"] as string) || `upload-${Date.now()}.bin`;
-    const savePath = path.join(sharedDir, filename);
+  // --- PC→Mobile: serve encrypted file blob by token ---
+  expressApp.get("/encrypted-file/:token", (req, res) => {
+    const token = req.params.token;
+    const entry = fileTransferRegistry.get(token);
+    if (!entry || !entry.encryptedPath) {
+      return res.status(404).send("File not found or expired");
+    }
+    const encPath = entry.encryptedPath as string;
+    if (!fs.existsSync(encPath)) {
+      fileTransferRegistry.delete(token);
+      return res.status(404).send("File not found");
+    }
+    res.sendFile(encPath);
+  });
 
+  // --- Mobile→PC: receive encrypted file blob by token ---
+  expressApp.post("/encrypted-upload/:token", (req, res) => {
+    const token = req.params.token;
+    const entry = fileTransferRegistry.get(token);
+    if (!entry || !entry.savePath) {
+      return res.status(404).send("Invalid or expired upload token");
+    }
+
+    const savePath = entry.savePath as string;
     const fileStream = fs.createWriteStream(savePath);
     req.pipe(fileStream);
 
     fileStream.on("finish", () => {
-      console.log(`[DEBUG] File saved to ${savePath}`);
-      getMainWindow()?.webContents.send("file-received", {
-        filename,
-        path: savePath,
-      });
+      console.log(`[DEBUG] Encrypted upload saved to ${savePath}`);
+      entry.uploaded = true;
+      tryDecryptUpload(token, getMainWindow);
       res.status(200).send("Upload complete");
     });
 
     fileStream.on("error", (err) => {
-      console.error("[DEBUG] File write error:", err);
+      console.error("[DEBUG] Upload write error:", err);
       res.status(500).send("Write error");
     });
   });
@@ -367,6 +387,47 @@ async function startServers(options: { getMainWindow: GetMainWindowFn }) {
     );
   });
   console.log("[DEBUG] HTTP Server address:", httpServer.address());
+
+  function tryDecryptUpload(token: string, getMainWindowFn: GetMainWindowFn) {
+    const entry = fileTransferRegistry.get(token);
+    if (!entry || !entry.uploaded || entry.decrypted) return;
+
+    const key = entry.key as Buffer;
+    const nonce = entry.nonce as Buffer;
+    const tag = entry.tag as Buffer;
+    const filename = entry.filename as string;
+    const savePath = entry.savePath as string;
+    const messageId = entry.messageId as string;
+    const deviceId = entry.deviceId as string;
+
+    const encryptedData = fs.readFileSync(savePath);
+    const decrypted = CryptoManager.decryptFile(encryptedData, key, nonce, tag);
+    if (!decrypted) {
+      console.error("[DEBUG] File decryption failed for upload:", filename);
+      getMainWindowFn()?.webContents.send("file-received", { filename, path: "", failed: true });
+      fileTransferRegistry.delete(token);
+      try { fs.unlinkSync(savePath); } catch { /* ignore */ }
+      return;
+    }
+
+    // Overwrite temp encrypted file with decrypted content
+    fs.writeFileSync(savePath, decrypted);
+    entry.decrypted = true;
+    console.log(`[DEBUG] File decrypted and saved: ${savePath}`);
+
+    getMainWindowFn()?.webContents.send("file-received", { filename, path: savePath });
+
+    // Send ACK to mobile — file fully received
+    if (messageId) {
+      const client = Array.from(connectedClients).find(c => c.deviceId === deviceId);
+      if (client && client.ws.readyState === WebSocket.OPEN) {
+        client.ws.send(JSON.stringify({ type: "message-ack", messageId }));
+        console.log("[DEBUG] Sent ACK for uploaded file:", messageId);
+      }
+    }
+
+    fileTransferRegistry.delete(token);
+  }
 
   // 2. WebSocket Server (with E2EE)
   console.log("[DEBUG] Starting WebSocket Server on port", WS_PORT);
@@ -488,42 +549,39 @@ async function startServers(options: { getMainWindow: GetMainWindowFn }) {
                 );
                 queuedMessages.forEach((msg) => {
                   if (msg.filePath) {
-                    // File retransfer — use chunked WS transfer instead of
-                    // sending the URL reference (mobile can't reach the URL)
+                    const cryptoModule = require("crypto");
+                    const fileBuffer = fs.readFileSync(msg.filePath);
+                    const { encrypted, key: encKey, nonce: encNonce, tag: encTag } = CryptoManager.encryptFile(fileBuffer);
+                    const downloadToken = cryptoModule.randomBytes(16).toString("hex");
+                    const tempDir = path.join(os.tmpdir(), "fastshare");
+                    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+                    const encryptedPath = path.join(tempDir, `${downloadToken}.enc`);
+                    fs.writeFileSync(encryptedPath, encrypted);
+                    fileTransferRegistry.set(downloadToken, {
+                      encryptedPath,
+                      cleanup: () => { try { fs.unlinkSync(encryptedPath); } catch { /* ignore */ } },
+                    });
+                    const downloadUrl = `http://${getLocalIp()}:${HTTP_PORT}/encrypted-file/${downloadToken}`;
                     const fileName = path.basename(msg.filePath);
                     const msgId = msg.data?.messageId;
-                    console.log("[DEBUG] Retransferring queued file:", fileName);
-                    sendFileEncrypted(
-                      clientInfo,
-                      msg.filePath,
-                      fileName,
-                      msg.messageType || "file",
-                      sendEncrypted,
-                      getMainWindow,
-                      msgId,
-                    );
-                    // Track ACK so the delivery status upgrades ✓→✓✓,
-                    // and the message re-queues if this retransfer also fails
+                    sendEncrypted(clientInfo, {
+                      type: "file-start",
+                      filename: fileName,
+                      fileSize: fileBuffer.length,
+                      mimeType: msg.messageType || "application/octet-stream",
+                      downloadUrl,
+                      key: encKey.toString("base64"),
+                      nonce: encNonce.toString("base64"),
+                      tag: encTag.toString("base64"),
+                      messageId: msgId,
+                    });
                     if (msgId) {
-                      trackPendingAck(
-                        msgId,
-                        msg.data,
-                        clientInfo.deviceId!,
-                        getMainWindow,
-                        msg.filePath,
-                        msg.messageType,
-                      );
+                      trackPendingAck(msgId, msg.data, clientInfo.deviceId!, getMainWindow, msg.filePath, msg.messageType, FILE_ACK_TIMEOUT_MS);
                     }
                   } else {
                     sendEncrypted(clientInfo, msg.data);
-                    // Track ACK if messageId is present
                     if (msg.data?.messageId) {
-                      trackPendingAck(
-                        msg.data.messageId,
-                        msg.data,
-                        clientInfo.deviceId!,
-                        getMainWindow,
-                      );
+                      trackPendingAck(msg.data.messageId, msg.data, clientInfo.deviceId!, getMainWindow);
                     }
                   }
                 });
@@ -628,7 +686,6 @@ async function startServers(options: { getMainWindow: GetMainWindowFn }) {
             removePairedDevice(data.deviceId);
           }
           stopHeartbeat(clientInfo);
-          cleanupFileReassembly(clientInfo);
           connectedClients.delete(clientInfo);
           // Notify renderer — device was explicitly unpaired
           getMainWindow()?.webContents.send("ws-message", {
@@ -645,7 +702,6 @@ async function startServers(options: { getMainWindow: GetMainWindowFn }) {
           getMainWindow()?.webContents.send("ws-disconnect", {
             reason: data.reason || "Mobile client disconnected",
           });
-          cleanupFileReassembly(clientInfo);
           connectedClients.delete(clientInfo);
           ws.close();
           return;
@@ -673,21 +729,49 @@ async function startServers(options: { getMainWindow: GetMainWindowFn }) {
           const inner = decrypted as any;
           console.log("[DEBUG] Decrypted inner message type:", inner.type);
 
-          // --- Send ACK back to mobile (delivery confirmation) ---
+          // Handle file upload signaling BEFORE ACK — ACK is delayed until file is decrypted
+          if (inner.type === "file-upload-request") {
+            const cryptoModule = require("crypto");
+            const uploadToken = cryptoModule.randomBytes(16).toString("hex");
+            const { filename, fileSize, mimeType, key, nonce, tag, messageId } = inner;
+
+            const sharedDir = path.join(os.homedir(), "FastShare");
+            if (!fs.existsSync(sharedDir)) fs.mkdirSync(sharedDir, { recursive: true });
+            const savePath = path.join(sharedDir, filename);
+
+            fileTransferRegistry.set(uploadToken, {
+              key: Buffer.from(key, "base64"),
+              nonce: Buffer.from(nonce, "base64"),
+              tag: Buffer.from(tag, "base64"),
+              filename, fileSize, mimeType, messageId,
+              savePath, uploaded: false, decrypted: false,
+              deviceId: clientInfo.deviceId,
+            });
+
+            // Notify renderer
+            getMainWindow()?.webContents.send("file-received-start", { filename, fileSize, mimeType });
+
+            // Tell mobile to start uploading
+            sendEncrypted(clientInfo, {
+              type: "file-upload-ready",
+              requestId: messageId,
+              uploadUrl: `http://${getLocalIp()}:${HTTP_PORT}/encrypted-upload/${uploadToken}`,
+            });
+            console.log("[DEBUG] File upload request from mobile:", filename);
+            return;
+          }
+
+          // Normal ACK + dedup for all other messages
           if (inner.messageId) {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: "message-ack", messageId: inner.messageId }));
-              console.log("[DEBUG] Sent ACK for message:", inner.messageId);
             }
-            // Dedup: skip processing if we've already seen this message
             if (recentMessageIds.has(inner.messageId)) {
-              console.log("[DEBUG] Duplicate message, skipping processing:", inner.messageId);
               return;
             }
             addRecentMessageId(inner.messageId);
           }
 
-          // Process the decrypted inner message
           processFileMessage(clientInfo, inner, getMainWindow);
           return;
         }
@@ -713,7 +797,6 @@ async function startServers(options: { getMainWindow: GetMainWindowFn }) {
       if (clientInfo.keyExchangeTimer) {
         clearTimeout(clientInfo.keyExchangeTimer);
       }
-      cleanupFileReassembly(clientInfo);
       connectedClients.delete(clientInfo);
 
       // Flush pending ACKs for this device into the offline queue.
@@ -770,7 +853,6 @@ async function startServers(options: { getMainWindow: GetMainWindowFn }) {
       if (clientInfo.keyExchangeTimer) {
         clearTimeout(clientInfo.keyExchangeTimer);
       }
-      cleanupFileReassembly(clientInfo);
       connectedClients.delete(clientInfo);
     });
   });
@@ -797,5 +879,5 @@ export {
   wss,
   WS_PORT,
   HTTP_PORT,
-  FILE_CHUNK_SIZE,
+  fileTransferRegistry,
 };

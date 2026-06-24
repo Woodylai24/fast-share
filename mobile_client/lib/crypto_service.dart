@@ -112,6 +112,47 @@ class CryptoService {
     }
   }
 
+  /// Encrypt raw bytes with a one-time random AES-256-GCM key.
+  /// Returns the encrypted data, key, nonce, and mac for transmission.
+  Future<({
+    Uint8List encrypted,
+    Uint8List key,
+    Uint8List nonce,
+    Uint8List mac,
+  })> encryptFile(List<int> data) async {
+    final key = List<int>.generate(32, (_) => Random.secure().nextInt(256));
+    final nonce = List<int>.generate(12, (_) => Random.secure().nextInt(256));
+    final secretKey = SecretKey(key);
+    final secretBox = await _aesGcm.encrypt(
+      data,
+      secretKey: secretKey,
+      nonce: nonce,
+    );
+    return (
+      encrypted: Uint8List.fromList(secretBox.cipherText),
+      key: Uint8List.fromList(key),
+      nonce: Uint8List.fromList(nonce),
+      mac: Uint8List.fromList(secretBox.mac.bytes),
+    );
+  }
+
+  /// Decrypt raw bytes encrypted with encryptFile.
+  Future<Uint8List?> decryptFile(
+    List<int> encrypted,
+    List<int> key,
+    List<int> nonce,
+    List<int> mac,
+  ) async {
+    try {
+      final secretBox = SecretBox(encrypted, nonce: nonce, mac: Mac(mac));
+      final decrypted = await _aesGcm.decrypt(secretBox, secretKey: SecretKey(key));
+      return Uint8List.fromList(decrypted);
+    } catch (error) {
+      print('[Crypto] File decryption failed: $error');
+      return null;
+    }
+  }
+
   /// Compute SHA-256 checksum of byte data (for file chunks).
   static Future<String> sha256(List<int> data) async {
     final hash = await Sha256().hash(data);

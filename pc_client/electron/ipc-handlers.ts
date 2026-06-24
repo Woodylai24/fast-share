@@ -3,8 +3,9 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { WebSocket } from "ws";
-import { sendEncrypted, broadcastToClients, connectedClients, getLocalIp, getLocalIps, WS_PORT, HTTP_PORT, wss, queueMessage, stopHeartbeat, generateMessageId, trackPendingAck, FILE_ACK_TIMEOUT_MS } from "./server";
-import { sendFileEncrypted } from "./file-transfer";
+import { sendEncrypted, broadcastToClients, connectedClients, getLocalIp, getLocalIps, WS_PORT, HTTP_PORT, wss, queueMessage, stopHeartbeat, generateMessageId, trackPendingAck, FILE_ACK_TIMEOUT_MS, fileTransferRegistry } from "./server";
+import { getMimeType } from "./file-transfer";
+import { CryptoManager } from "./crypto";
 import { sendPushNotification } from "./firebase";
 import { aiSettingsStore } from "./ai-summarize";
 import settingsStore, { getAllPairedDevices } from "./settings-store";
@@ -194,10 +195,8 @@ function registerIpcHandlers(
     });
 
     // Clear tracked clients
-    const { cleanupFileReassembly } = require("./file-transfer");
     connectedClients.forEach((client) => {
       stopHeartbeat(client);
-      cleanupFileReassembly(client);
       if (client.keyExchangeTimer) {
         clearTimeout(client.keyExchangeTimer);
       }
@@ -229,81 +228,74 @@ function registerIpcHandlers(
 
   ipcMainInstance.on("offer-file", async (event, filePath, ip, messageId) => {
     const fileName = path.basename(filePath);
-    const sharedDir = path.join(os.homedir(), "FastShare");
-    if (!fs.existsSync(sharedDir)) fs.mkdirSync(sharedDir, { recursive: true });
+    const cryptoModule = require("crypto");
 
-    const destPath = path.join(sharedDir, fileName);
-    fs.copyFileSync(filePath, destPath);
+    // Read and encrypt the file once
+    const fileBuffer = fs.readFileSync(filePath);
+    const fileSize = fileBuffer.length;
+    const { encrypted, key: encKey, nonce: encNonce, tag: encTag } = CryptoManager.encryptFile(fileBuffer);
+
+    // Write encrypted blob to temp file
+    const downloadToken = cryptoModule.randomBytes(16).toString("hex");
+    const tempDir = path.join(os.tmpdir(), "fastshare");
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+    const encryptedPath = path.join(tempDir, `${downloadToken}.enc`);
+    fs.writeFileSync(encryptedPath, encrypted);
+
+    fileTransferRegistry.set(downloadToken, {
+      encryptedPath,
+      cleanup: () => { try { fs.unlinkSync(encryptedPath); } catch { /* ignore */ } },
+    });
 
     const hostIp = ip || getLocalIp();
-    const fileUrl = `http://${hostIp}:${HTTP_PORT}/files/${encodeURIComponent(
-      fileName,
-    )}`;
+    const downloadUrl = `http://${hostIp}:${HTTP_PORT}/encrypted-file/${downloadToken}`;
 
-    const imageExtensions = [
-      ".jpg",
-      ".jpeg",
-      ".png",
-      ".gif",
-      ".bmp",
-      ".webp",
-      ".svg",
-    ];
+    const imageExtensions = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg"];
     const ext = path.extname(fileName).toLowerCase();
     const messageType = imageExtensions.includes(ext) ? "image" : "file";
+    const mimeType = getMimeType(fileName);
 
-    // Try encrypted chunked file transfer first, fall back to legacy URL-based offer
+    getMainWindow()?.webContents.send("file-sent-start", { filename: fileName, fileSize, mimeType });
+
     let sentViaWs = false;
     connectedClients.forEach((client) => {
-      if (
-        client.ws.readyState === WebSocket.OPEN &&
-        client.keyExchangeComplete
-      ) {
-        // Send file via encrypted chunked WS transfer
-        sendFileEncrypted(client, destPath, fileName, messageType, sendEncrypted, getMainWindow, messageId);
+      if (client.ws.readyState === WebSocket.OPEN && client.keyExchangeComplete) {
+        sendEncrypted(client, {
+          type: "file-start",
+          filename: fileName,
+          fileSize,
+          mimeType,
+          downloadUrl,
+          key: encKey.toString("base64"),
+          nonce: encNonce.toString("base64"),
+          tag: encTag.toString("base64"),
+          messageId,
+        });
         sentViaWs = true;
-        // Track ACK — mobile confirms receipt after reassembling the file
+
         if (messageId && client.deviceId) {
-          trackPendingAck(messageId, { type: messageType, filename: fileName, url: fileUrl, messageId }, client.deviceId, undefined, destPath, messageType, FILE_ACK_TIMEOUT_MS);
+          trackPendingAck(
+            messageId,
+            { type: messageType, filename: fileName, downloadUrl, messageId },
+            client.deviceId, undefined, filePath, messageType, FILE_ACK_TIMEOUT_MS,
+          );
         }
       }
     });
 
-    // Also offer legacy URL-based file for clients without key exchange
-    const legacyMessage = {
-      type: messageType,
-      filename: fileName,
-      url: fileUrl,
-    };
+    getMainWindow()?.webContents.send("file-sent-complete", { filename: fileName });
 
-    let sentLegacy = false;
-    connectedClients.forEach((client) => {
-      if (
-        client.ws.readyState === WebSocket.OPEN &&
-        !client.keyExchangeComplete
-      ) {
-        client.ws.send(JSON.stringify(legacyMessage));
-        sentLegacy = true;
-      }
-    });
-
-    // If no clients connected, queue for chunked retransfer + send push notification
-    if (!sentViaWs && !sentLegacy) {
+    if (!sentViaWs) {
       const pairedDevices = getAllPairedDevices();
       for (const [deviceId] of Object.entries(pairedDevices)) {
-        // Queue with filePath so the flush logic does a proper chunked
-        // WS retransfer on reconnect, not a URL reference the mobile can't reach.
-        queueMessage(deviceId, messageType, { ...legacyMessage, messageId }, destPath, messageType);
+        queueMessage(deviceId, messageType, { type: messageType, filename: fileName, downloadUrl, messageId }, filePath, messageType);
         await sendPushNotification(deviceId, {
           title: messageType === "image" ? "Image Received" : "File Received",
           body: fileName,
-          data: { type: messageType, filename: fileName, url: fileUrl },
+          data: { type: messageType, filename: fileName },
         });
       }
-      console.log(
-        "[DEBUG] No clients connected, file offer queued and notification sent:",
-        fileName,
-      );
+      console.log("[DEBUG] No clients connected, file queued:", fileName);
     }
   });
 
